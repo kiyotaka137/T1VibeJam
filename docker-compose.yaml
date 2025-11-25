@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  db:
+    image: ankane/pgvector:latest
+    container_name: rag_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_password
+      POSTGRES_DB: rag_db
+    ports:
+      - "5434:5432"  # на хосте 5433, внутри контейнера 5432
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  api:
+    build: .
+    container_name: rag_api
+    depends_on:
+      - db
+    environment:
+      # из .env подтянутся
+      API_KEY: ${API_KEY}
+      BASE_URL: ${BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      EMBED_MODEL: ${EMBED_MODEL}
+
+      # подключение к Postgres ИЗНУТРИ контейнера api
+      PG_HOST: rag_postgres
+      PG_PORT: 5432
+      PG_DB: rag_db
+      PG_USER: rag_user
+      PG_PASSWORD: rag_password
+    ports:
+      - "8000:8000"
+    command: >
+      uvicorn rag_service.api:app
+      --host 0.0.0.0
+      --port 8000
