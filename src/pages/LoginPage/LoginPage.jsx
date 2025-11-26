@@ -5,12 +5,11 @@ import { useAuth } from "../../app/providers/AuthContext.jsx";
 export function LoginPage({ onLogin }) {
   const auth = useAuth();
 
-  const [mode, setMode] = useState("login"); // "login" | "signup"
+  const [mode, setMode] = useState("login");
   const isRegister = mode === "signup";
 
   const [name, setName] = useState("");
   const [role, setRole] = useState("hr");
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -28,7 +27,6 @@ export function LoginPage({ onLogin }) {
     return "";
   };
 
-  // --- ОБНОВЛЕННАЯ ФУНКЦИЯ SUBMIT (MOCK) ---
   const submit = async () => {
     const msg = validate();
     if (msg) {
@@ -40,26 +38,26 @@ export function LoginPage({ onLogin }) {
       setError("");
       setLoading(true);
 
-      // 1. Имитация задержки сети (1 секунда)
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      console.log("✅ MOCK AUTH SUCCESS");
-      console.log("📥 Data:", isRegister ? { name, role, email } : { email });
-
-      /* --- ЗДЕСЬ БЫЛ РЕАЛЬНЫЙ ЗАПРОС (ОТКЛЮЧЕН) ---
       if (isRegister) {
-        await auth.signup({ email, password, name, role });
+        // Реальный запрос через Context
+        await auth.signup({
+          email: email.trim().toLowerCase(),
+          password,
+          name: name.trim(),
+          role,
+        });
       } else {
-        await auth.login(email, password);
+        // Реальный запрос через Context
+        await auth.login(email.trim().toLowerCase(), password);
       }
-      */
 
-      // 2. Вызываем коллбэк успешного входа
-      // Это переключит экран в App.jsx
-      onLogin?.();
+      // Если ошибок не было, вызываем коллбек перехода
+      if (onLogin) onLogin();
 
     } catch (e) {
-      setError(e?.message || "Ошибка авторизации");
+      console.error(e);
+      // Если сервер упал, e.message может быть 'Failed to fetch'
+      setError(e.message === 'Failed to fetch' ? 'Нет соединения с сервером' : e.message);
     } finally {
       setLoading(false);
     }
@@ -93,7 +91,6 @@ export function LoginPage({ onLogin }) {
               placeholder="Например: Alice HR"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={onKeyDown}
               className="w-full mb-4 p-3 rounded bg-slate-700 text-white border border-slate-600 focus:border-blue-500 outline-none"
             />
 
@@ -115,7 +112,6 @@ export function LoginPage({ onLogin }) {
           placeholder="hr1@test.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={onKeyDown}
           className={`w-full mb-4 p-3 rounded bg-slate-700 text-white border outline-none ${
             error ? "border-red-500" : "border-slate-600 focus:border-blue-500"
           }`}
@@ -139,12 +135,10 @@ export function LoginPage({ onLogin }) {
           </div>
         )}
 
-        {/* КНОПКА С TYPE="BUTTON" ДЛЯ НАДЕЖНОСТИ */}
         <button
-          type="button"
           onClick={submit}
           disabled={loading}
-          className={`w-full font-bold py-3 rounded transition mb-4 flex items-center justify-center gap-2 cursor-pointer relative z-10 ${
+          className={`w-full font-bold py-3 rounded transition mb-4 flex items-center justify-center gap-2 ${
             loading
               ? "bg-blue-600/60 cursor-not-allowed"
               : "bg-blue-600 hover:bg-blue-500"
@@ -152,7 +146,7 @@ export function LoginPage({ onLogin }) {
         >
           {loading ? (
             <>
-              <Loader2 className="animate-spin" size={18} /> Подождите...
+              <Loader2 className="animate-spin" size={18} /> Загрузка...
             </>
           ) : isRegister ? (
             "Зарегистрироваться"
@@ -161,32 +155,23 @@ export function LoginPage({ onLogin }) {
           )}
         </button>
 
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setMode(isRegister ? "login" : "signup");
-            }}
-            className="relative z-10 cursor-pointer w-full text-slate-400 hover:text-white text-sm flex items-center justify-center gap-2 transition p-2"
-          >
-            {isRegister ? (
-              <>
-                <LogIn size={14} /> Уже есть аккаунт? Войти
-              </>
-            ) : (
-              <>
-                <UserPlus size={14} /> Нет аккаунта? Регистрация
-              </>
-            )}
-          </button>
-        </div>
-
-        {auth?.user && (
-          <div className="mt-6 text-xs text-slate-400 text-center">
-            Вы уже авторизованы как: <br/> <span className="text-white font-mono">{auth.user.email}</span>
-          </div>
-        )}
+        <button
+          onClick={() => {
+            setError("");
+            setMode(isRegister ? "login" : "signup");
+          }}
+          className="w-full text-slate-400 hover:text-white text-sm flex items-center justify-center gap-2 transition"
+        >
+          {isRegister ? (
+            <>
+              <LogIn size={14} /> Уже есть аккаунт? Войти
+            </>
+          ) : (
+            <>
+              <UserPlus size={14} /> Нет аккаунта? Регистрация
+            </>
+          )}
+        </button>
       </div>
     </div>
   );
