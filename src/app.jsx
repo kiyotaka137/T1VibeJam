@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import Editor from "@monaco-editor/react"; // ИМПОРТ РЕДАКТОРА
 import {
   Terminal,
   Play,
@@ -30,14 +31,23 @@ import {
 // --- КОНСТАНТЫ И ШАБЛОНЫ КОДА ---
 
 const LANGUAGE_TEMPLATES = {
-  JavaScript: `// Напишите решение здесь\nfunction solve(input) {\n  return input;\n}`,
-  Python: `# Write your solution here\ndef solve(input_data):\n    return input_data`,
-  "C++": `// Write your solution here\n#include <vector>\nusing namespace std;\n\nclass Solution {\npublic:\n    vector<int> solve(vector<int>& nums) {\n        return nums;\n    }\n};`,
-  Java: `// Write your solution here\nclass Solution {\n    public int[] solve(int[] nums) {\n        return nums;\n    }\n}`,
-  Go: `// Write your solution here\npackage main\n\nfunc solve(input []int) []int {\n    return input\n}`,
+  javascript: `// Напишите решение здесь\nfunction solve(input) {\n  return input;\n}`,
+  python: `# Write your solution here\ndef solve(input_data):\n    return input_data`,
+  cpp: `// Write your solution here\n#include <vector>\nusing namespace std;\n\nclass Solution {\npublic:\n    vector<int> solve(vector<int>& nums) {\n        return nums;\n    }\n};`,
+  java: `// Write your solution here\nclass Solution {\n    public int[] solve(int[] nums) {\n        return nums;\n    }\n}`,
+  go: `// Write your solution here\npackage main\n\nfunc solve(input []int) []int {\n    return input\n}`,
 };
 
-const LEETCODE_LANGUAGES = Object.keys(LANGUAGE_TEMPLATES);
+// Маппинг для красивого отображения в выпадающем списке
+const DISPLAY_LANGUAGES = {
+  javascript: "JavaScript",
+  python: "Python",
+  cpp: "C++",
+  java: "Java",
+  go: "Go",
+};
+
+const EDITOR_LANGUAGES = Object.keys(LANGUAGE_TEMPLATES);
 
 // Задачи для симуляции потока
 const INTERVIEW_TASKS = [
@@ -628,11 +638,11 @@ const HRDashboard = ({ onNavigateToInterview, onLogout }) => {
   );
 };
 
-// 3. Интерфейс Кандидата (С Таймером, Анимацией тестов и Ресайзом)
+// 3. Интерфейс Кандидата (С Monaco Editor, Таймером, Анимацией тестов и Ресайзом)
 const InterviewRoom = ({ onExit }) => {
   const [taskIndex, setTaskIndex] = useState(0);
-  const [language, setLanguage] = useState("JavaScript");
-  const [code, setCode] = useState(LANGUAGE_TEMPLATES["JavaScript"]);
+  const [language, setLanguage] = useState("javascript");
+  const [code, setCode] = useState(LANGUAGE_TEMPLATES["javascript"]);
   const [leftTab, setLeftTab] = useState("task");
   const [testStatus, setTestStatus] = useState("idle");
   const [messages, setMessages] = useState([
@@ -649,7 +659,7 @@ const InterviewRoom = ({ onExit }) => {
   const [disqualified, setDisqualified] = useState(false);
   const [disqReason, setDisqReason] = useState("");
   const [finished, setFinished] = useState(false);
-  const [timeOut, setTimeOut] = useState(false); // Время вышло
+  const [timeOut, setTimeOut] = useState(false);
 
   // State: Main Timer (1 hour = 3600 sec)
   const [timeLeft, setTimeLeft] = useState(3600);
@@ -816,8 +826,6 @@ const InterviewRoom = ({ onExit }) => {
     e.preventDefault();
     alert("Копирование и вставка запрещены правилами собеседования.");
   };
-
-  // --- RENDER DISQUALIFIED / TIMEOUT SCREENS ---
 
   if (disqualified) {
     return (
@@ -1066,20 +1074,26 @@ const InterviewRoom = ({ onExit }) => {
               onChange={handleLanguageChange}
               className="bg-transparent text-xs text-slate-300 outline-none border border-slate-700 rounded px-2 py-1 cursor-pointer hover:border-slate-500"
             >
-              {LEETCODE_LANGUAGES.map((lang) => (
+              {EDITOR_LANGUAGES.map((lang) => (
                 <option key={lang} value={lang}>
-                  {lang}
+                  {DISPLAY_LANGUAGES[lang]}
                 </option>
               ))}
             </select>
           </div>
 
           <div className="flex-1 bg-slate-950 relative overflow-hidden">
-            <textarea
+            <Editor
+              height="100%"
+              theme="vs-dark"
+              language={language}
               value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className="w-full h-full bg-slate-950 text-slate-300 font-mono p-4 outline-none resize-none text-sm leading-6"
-              spellCheck="false"
+              onChange={(value) => setCode(value)}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                automaticLayout: true,
+              }}
             />
           </div>
 
