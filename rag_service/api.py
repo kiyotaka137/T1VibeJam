@@ -1,177 +1,156 @@
 # rag_service/api.py
-from typing import List
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Any, List, Dict, Optional
 
-from .tasks import (
-    generate_task,
-    create_user_task_with_tests,
-    create_generated_task_with_tests,
-)
+# Импортируем новую функцию workflow
+from .tasks import generate_task_workflow, create_custom_task_workflow, TaskStructure
+from .hints import hint_service
+from .db_storage import init_db_tables, get_task_tests_raw, get_full_task_by_id, LevelType
 from .similar import find_similar_tasks
-from .vector_store import LevelType
-from .db_tests import init_tests_table, load_task_tests, TestCaseModel
-
 
 app = FastAPI(title="RAG Task Service")
 
 
-# ----- startup -----
-
 @app.on_event("startup")
 async def on_startup():
-    # инициализируем таблицу для тестов
-    await init_tests_table()
+    await init_db_tables()
 
 
-# ----- Модели -----
+# ----- Models -----
 
-class ChatRequest(BaseModel):
-    user_id: str | None = None
+class GenerateTaskRequest(BaseModel):
+    level: str
+    topic: str
+
+class CreateCustomTaskRequest(BaseModel):
+    level: str
+    raw_text: str # Текст от HR
+
+
+class GenerateTaskResponse(BaseModel):
+    # ИСПРАВЛЕНО: используем Optional вместо |
+    task_id: Optional[str]
+    task_data: Optional[TaskStructure]
     message: str
 
 
-class ChatResponse(BaseModel):
-    reply: str
-    mode: str            # "SUBMIT" или "GENERATE"
-    task_id: str | None  # id задачи, если она была сохранена
+class HintRequest(BaseModel):
+    task_id: str
+    user_code: str
+    user_message: str
 
 
-class SimilarRequest(BaseModel):
-    level: str           # "junior" | "middle" | "senior"
-    description: str
-    k: int = 5
+class HintResponse(BaseModel):
+    hint: str
 
 
-class SimilarTask(BaseModel):
-    task_id: str | None = None
-    text: str
-    topic: str | None = None
-    level: str | None = None
-    source: str | None = None
-
-
-class SimilarResponse(BaseModel):
+class SearchRequest(BaseModel):
     query: str
-    tasks: List[SimilarTask]
+    level: str
+    limit: int = 5
+
+
+class SearchResultItem(BaseModel):
+    task_id: str
+    # ИСПРАВЛЕНО: используем Optional вместо |
+    title: Optional[str]
+    preview: str
 
 
 class TestsResponse(BaseModel):
     task_id: str
-    tests: List[TestCaseModel]
+    tests: Any
 
 
-# ----- Префиксы для SUBMIT -----
-
-SUBMIT_PREFIXES = {
-    LevelType.JUNIOR: "SUBMIT_JUNIOR ",
-    LevelType.MIDDLE: "SUBMIT_MIDDLE ",
-    LevelType.SENIOR: "SUBMIT_SENIOR ",
-}
-
-
-def parse_level(level_str: str) -> LevelType:
-    normalized = level_str.strip().lower()
-    if normalized == "junior":
-        return LevelType.JUNIOR
-    if normalized == "middle":
-        return LevelType.MIDDLE
-    if normalized == "senior":
-        return LevelType.SENIOR
-    raise ValueError(f"Unknown level: {level_str}")
+def parse_level(s: str) -> LevelType:
+    s = s.strip().lower()
+    if s == "junior": return LevelType.JUNIOR
+    if s == "middle": return LevelType.MIDDLE
+    if s == "senior": return LevelType.SENIOR
+    raise ValueError("Invalid level")
 
 
-# ----- /chat -----
+# ----- Endpoints -----
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest):
-    """
-    Логика теперь простая:
-    1) Если сообщение начинается с SUBMIT_JUNIOR/MIDDLE/SENIOR — считаем, что это готовая задача.
-       Сохраняем её в нужную коллекцию, генерируем тесты.
-    2) Всё остальное — считаем запросом на генерацию задачи.
-       Генерируем задачу, и если should_save=true, сохраняем + генерируем тесты.
-    """
-    raw_message = req.message.strip()
-
-    # 1) SUBMIT_JUNIOR / SUBMIT_MIDDLE / SUBMIT_SENIOR
-    for level, prefix in SUBMIT_PREFIXES.items():
-        if raw_message.startswith(prefix):
-            task_text = raw_message[len(prefix):].strip()
-            if not task_text:
-                return ChatResponse(
-                    reply="После префикса нужно написать текст задачи.",
-                    mode="SUBMIT",
-                    task_id=None,
-                )
-
-            task_id = await create_user_task_with_tests(task_text, level)
-
-            return ChatResponse(
-                reply=(
-                    f"Задачу уровня {level.value} сохранил в базу "
-                    f"и сгенерировал для неё тесты (task_id: {task_id})."
-                ),
-                mode="SUBMIT",
-                task_id=task_id,
-            )
-
-    # 2) Всё остальное — генерация задачи
-    gen_task = await generate_task(raw_message)
-    task_id = await create_generated_task_with_tests(gen_task)
-
-    # task_id может быть None, если should_save = false
-    return ChatResponse(
-        reply=gen_task.task_text,
-        mode="GENERATE",
-        task_id=task_id,
-    )
-
-
-# ----- /similar -----
-
-@app.post("/similar", response_model=SimilarResponse)
-async def similar_endpoint(req: SimilarRequest):
+@app.post("/generate_task", response_model=GenerateTaskResponse)
+async def generate_task_endpoint(req: GenerateTaskRequest):
     try:
-        level = parse_level(req.level)
+        lvl = parse_level(req.level)
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="level должен быть одним из: junior, middle, senior",
-        )
+        raise HTTPException(400, "Invalid level")
 
-    query, docs = await find_similar_tasks(
-        level=level,
-        description=req.description,
-        k=req.k,
+    task_id, task_data = await generate_task_workflow(lvl, req.topic)
+
+    if not task_id:
+        return GenerateTaskResponse(task_id=None, task_data=None, message="Fail")
+
+    return GenerateTaskResponse(task_id=task_id, task_data=task_data, message="Success")
+
+
+# 2. Создание из сырого текста HR (НОВЫЙ)
+@app.post("/create_custom_task", response_model=GenerateTaskResponse)
+async def create_custom_task_endpoint(req: CreateCustomTaskRequest):
+    """
+    Принимает сырой текст задачи от HR, облагораживает его через LLM,
+    генерирует тесты/код и сохраняет как полноценную задачу.
+    """
+    try:
+        lvl = parse_level(req.level)
+    except ValueError:
+        raise HTTPException(400, "Invalid level")
+
+    task_id, task_data = await create_custom_task_workflow(lvl, req.raw_text)
+
+    if not task_id:
+        return GenerateTaskResponse(task_id=None, task_data=None, message="Ошибка обработки задачи.")
+
+    return GenerateTaskResponse(
+        task_id=task_id,
+        task_data=task_data,
+        message="Задача успешно создана из описания HR."
     )
 
-    tasks: List[SimilarTask] = []
-    for d in docs:
-        meta = d.metadata or {}
-        tasks.append(
-            SimilarTask(
-                task_id=meta.get("task_id"),
-                text=d.page_content,
-                topic=meta.get("topic"),
-                level=meta.get("level"),
-                source=meta.get("source"),
-            )
-        )
 
-    return SimilarResponse(query=query, tasks=tasks)
+@app.post("/hint", response_model=HintResponse)
+async def hint_endpoint(req: HintRequest):
+    hint = await hint_service.process_hint(req.task_id, req.user_code, req.user_message)
+    return HintResponse(hint=hint)
 
 
-# ----- /tests/{task_id} -----
-# Эту ручку будет дергать другой микросервис
+@app.post("/search_tasks", response_model=List[SearchResultItem])
+async def search_tasks_endpoint(req: SearchRequest):
+    try:
+        lvl = parse_level(req.level)
+    except ValueError:
+        raise HTTPException(400, "Invalid level")
+
+    _, docs = await find_similar_tasks(level=lvl, description=req.query, k=req.limit)
+
+    results = []
+    for doc in docs:
+        meta = doc.metadata
+        t_id = meta.get("task_id")
+        if not t_id: continue
+
+        results.append(SearchResultItem(
+            task_id=t_id,
+            title=meta.get("title", "No Title"),
+            preview=doc.page_content[:200]
+        ))
+    return results
+
+
+@app.get("/task/{task_id}", response_model=Dict[str, Any])
+async def get_task_detail_endpoint(task_id: str):
+    task_data = await get_full_task_by_id(task_id)
+    if not task_data:
+        raise HTTPException(404, "Task not found")
+    return task_data
+
 
 @app.get("/tests/{task_id}", response_model=TestsResponse)
 async def get_tests(task_id: str):
-    tests = await load_task_tests(task_id)
-    if tests is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Tests not found for this task_id",
-        )
+    tests = await get_task_tests_raw(task_id)
+    if not tests: raise HTTPException(404, "Not found")
     return TestsResponse(task_id=task_id, tests=tests)
