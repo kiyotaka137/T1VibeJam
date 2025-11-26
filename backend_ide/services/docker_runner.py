@@ -3,23 +3,40 @@ import subprocess
 
 from fastapi import HTTPException, status
 
-from backend_ide.core.config import RUNNER_IMAGE
+from backend_ide.core.config import LANGUAGE_RUNNERS
 
+def normalize_language(lang: str) -> str:
+    lang = (lang or "").strip().lower()
+    if lang == "python":
+        return "py"
+    if lang == "javascript":
+        return "js"
+    if lang == "c++":
+        return "cpp"
+    return lang
 
-def run_in_docker(job_dir: str) -> dict:
+def run_in_docker(job_dir: str, language: str) -> dict:
     """
     Запускает Docker-контейнер с образом RUNNER_IMAGE.
     Внутри контейнера должен быть скрипт run_tests.py, который:
     - принимает путь к job-директории (например, /backend_ide/job)
     - выводит JSON с результатами тестов в stdout
     """
+    lang = normalize_language(language)
+    image = LANGUAGE_RUNNERS.get(lang)
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Язык {language!r} не поддерживается",
+        )
+
     cmd = [
         "docker", "run", "--rm",
         "-v", f"{job_dir}:/backend_ide/job",
         "--network=none",
         "--memory=256m",
         "--cpus=1",
-        RUNNER_IMAGE,
+        image,
         "/backend_ide/job",
     ]
 

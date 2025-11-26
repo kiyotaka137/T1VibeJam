@@ -6,7 +6,11 @@ SECRET_KEY = "SUPER_SECRET_KEY_CHANGE_ME"
 ALGORITHM = "HS256"
 
 # Docker runner
-RUNNER_IMAGE = "python-runner"
+LANGUAGE_RUNNERS = {
+    "py": "python-runner",
+    "js": "js-runner",
+    "cpp": "cpp-runner",
+}
 
 # Job dir
 JOB_BASE_DIR = "/tmp/jobs"

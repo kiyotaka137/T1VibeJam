@@ -14,7 +14,7 @@ from backend_ide.schemas.submission import (
     FailedTest,
 )
 from backend_ide.services.task_service import get_test_cases_for_task
-from backend_ide.services.docker_runner import run_in_docker
+from backend_ide.services.docker_runner import run_in_docker, normalize_language
 
 router = APIRouter()
 
@@ -40,11 +40,11 @@ async def submit_solution(
     - Возвращаем количество пройденных тестов и детали
     """
 
-    if payload.language.lower() != "python":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Сейчас поддерживается только Python",
-        )
+    # if payload.language.lower() != "python":
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="Сейчас поддерживается только Python",
+    #     )
     
     test_cases = await get_test_cases_for_task(str(payload.task_id))
 
@@ -59,9 +59,34 @@ async def submit_solution(
         dir=JOB_BASE_DIR,
     )
 
+    lang = normalize_language(payload.language)
+
+    if lang == "py":
+        solution_filename = "solution.py"
+    elif lang == "js":
+        solution_filename = "solution.js"
+    elif lang == "cpp":
+        solution_filename = "solution.cpp"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Язык {payload.language!r} не поддерживается",
+        )    
+
     try:
-        # solution.py
-        solution_path = Path(job_dir) / "solution.py"
+        if lang == "js":
+            if "module.exports" not in payload.source_code:
+
+                payload.source_code += """
+                // --- автодобавлено платформой ---
+                if (typeof module !== "undefined" && module.exports) {
+                    if (typeof solve !== "undefined") {
+                        module.exports.solve = solve;
+                    }
+                }
+                """
+        # solution.*
+        solution_path = Path(job_dir) / solution_filename
         solution_path.write_text(payload.source_code, encoding="utf-8")
 
         # cases.json – просто дамп того, что было в БД
@@ -71,7 +96,7 @@ async def submit_solution(
             encoding="utf-8",
         )
 
-        raw_result = run_in_docker(job_dir)
+        raw_result = run_in_docker(job_dir, payload.language)
 
         # Ожидаем формат:
         # {
