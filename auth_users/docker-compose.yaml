@@ -14,8 +14,6 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
-    networks:
-      - vibecode-net
 
   migrate:
     image: postgres:16
@@ -34,8 +32,6 @@ services:
       done
       "
     restart: "no"
-    networks:
-      - vibecode-net
 
 
 
@@ -54,8 +50,6 @@ services:
         condition: service_completed_successfully
     ports:
       - "8081:8080"
-    networks:
-      - vibecode-net
 volumes:
   pgdata:
 networks:
