@@ -1,0 +1,435 @@
+openapi: 3.0.3
+info:
+  title: Interviews Service (interviews-svc)
+  version: 0.1.0
+  description: >
+    MVP сервис собеседований: хранит интервью, инвайты и список внешних task_ids (как text[]).
+    При создании интервью вызывает auth_users/internal/users/precreate, чтобы получить candidate_user_id.
+servers:
+  - url: http://localhost:8082
+    description: Local docker-compose (example)
+
+tags:
+  - name: HR
+  - name: Invites
+  - name: Internal
+
+paths:
+  /v1/hr/interviews:
+    post:
+      tags: [HR]
+      summary: Создать интервью + сгенерировать invite
+      description: >
+        Требует JWT (роль hr). Внутри вызывает auth_users internal precreate для кандидата и сохраняет candidate_user_id.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInterviewRequest"
+            examples:
+              create:
+                value:
+                  topics: ["algorithms", "system design"]
+                  level: "middle"
+                  planned_start: "2025-12-01T10:00:00Z"
+                  planned_end: "2025-12-01T12:00:00Z"
+                  candidate:
+                    email: "cand@test.com"
+                    name: "Bob Candidate"
+                  invite_expires_minutes: 4320
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateInterviewResponse"
+        "400":
+          description: Некорректный JSON/валидация
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          description: Нет/битый JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Роль не hr
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "502":
+          description: Ошибка вызова auth_users (precreate кандидата)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+    get:
+      tags: [HR]
+      summary: Список интервью HR
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListInterviewsResponse"
+        "401":
+          description: Нет/битый JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Роль не hr
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/hr/interviews/{id}:
+    get:
+      tags: [HR]
+      summary: Детали интервью (только владелец HR)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Interview" }
+        "401":
+          description: Нет/битый JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Не владелец / роль не hr
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Не найдено
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/hr/interviews/{id}/invites:
+    post:
+      tags: [HR]
+      summary: Регенерировать invite (старые revoke)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegenerateInviteResponse" }
+        "401":
+          description: Нет/битый JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Не владелец / роль не hr
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Интервью не найдено
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/invites/{token}:
+    get:
+      tags: [Invites]
+      summary: Публичное превью инвайта (без JWT)
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Всегда 200 если invite найден; valid=false если истёк/отозван
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitePreviewResponse" }
+        "404":
+          description: Invite не найден
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/invites/{token}/claim:
+    post:
+      tags: [Invites]
+      summary: Claim инвайт (только candidate, uid должен совпасть с candidate_user_id)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaimInviteResponse" }
+        "401":
+          description: Нет/битый JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Роль не candidate или токен не для этого пользователя
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Invite/Interview не найден
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Invite уже claimed кем-то другим
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "410":
+          description: Invite истёк или отозван
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  "/internal/interviews/{id}/task-ids:append":
+    post:
+      tags: [Internal]
+      summary: Добавить внешний task_id в interview.task_ids (internal)
+      security:
+        - internalApiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppendTaskIdRequest" }
+            examples:
+              append:
+                value: { task_id: "T-123" }
+      responses:
+        "200":
+          description: Возвращает обновлённый массив task_ids
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskIdsResponse" }
+        "400":
+          description: Некорректный JSON/валидация
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Неверный internal api key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Interview не найден
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    internalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+
+  schemas:
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string, example: bad_request }
+        message: { type: string, example: "topics is required" }
+
+    CandidateInput:
+      type: object
+      additionalProperties: false
+      required: [email, name]
+      properties:
+        email: { type: string, format: email, example: cand@test.com }
+        name: { type: string, example: "Bob Candidate" }
+
+    CreateInterviewRequest:
+      type: object
+      additionalProperties: false
+      required: [topics, level, candidate]
+      properties:
+        topics:
+          type: array
+          items: { type: string }
+          minItems: 1
+          example: ["algorithms", "system design"]
+        level:
+          type: string
+          example: middle
+        planned_start:
+          type: string
+          format: date-time
+          nullable: true
+        planned_end:
+          type: string
+          format: date-time
+          nullable: true
+        candidate:
+          $ref: "#/components/schemas/CandidateInput"
+        invite_expires_minutes:
+          type: integer
+          nullable: true
+          example: 4320
+
+    InterviewStatus:
+      type: string
+      enum: [created, active, finished, canceled]
+
+    Interview:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - hr_user_id
+        - candidate_user_id
+        - topics
+        - level
+        - status
+        - task_ids
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        hr_user_id: { type: string, format: uuid }
+        candidate_user_id: { type: string, format: uuid }
+        topics:
+          type: array
+          items: { type: string }
+        level: { type: string }
+        planned_start: { type: string, format: date-time, nullable: true }
+        planned_end: { type: string, format: date-time, nullable: true }
+        start_time: { type: string, format: date-time, nullable: true }
+        end_time: { type: string, format: date-time, nullable: true }
+        status: { $ref: "#/components/schemas/InterviewStatus" }
+        task_ids:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    InviteOut:
+      type: object
+      additionalProperties: false
+      required: [token, expires_at]
+      properties:
+        token: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    CreateInterviewResponse:
+      type: object
+      additionalProperties: false
+      required: [interview, invite, invite_url]
+      properties:
+        interview: { $ref: "#/components/schemas/Interview" }
+        invite: { $ref: "#/components/schemas/InviteOut" }
+        invite_url: { type: string, example: "https://app.example.com/invite/abc123" }
+
+    ListInterviewsResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Interview" }
+
+    RegenerateInviteResponse:
+      type: object
+      additionalProperties: false
+      required: [token, expires_at, invite_url]
+      properties:
+        token: { type: string }
+        expires_at: { type: string, format: date-time }
+        invite_url: { type: string }
+
+    InvitePreviewResponse:
+      type: object
+      additionalProperties: false
+      required: [valid, expires_at]
+      properties:
+        valid: { type: boolean }
+        expires_at: { type: string, format: date-time }
+        interview_preview:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [topics, level, status]
+          properties:
+            topics:
+              type: array
+              items: { type: string }
+            level: { type: string }
+            planned_start: { type: string, format: date-time, nullable: true }
+            planned_end: { type: string, format: date-time, nullable: true }
+            status: { $ref: "#/components/schemas/InterviewStatus" }
+
+    ClaimInviteResponse:
+      type: object
+      additionalProperties: false
+      required: [interview_id, status]
+      properties:
+        interview_id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/InterviewStatus" }
+
+    AppendTaskIdRequest:
+      type: object
+      additionalProperties: false
+      required: [task_id]
+      properties:
+        task_id: { type: string, example: "T-123" }
+
+    TaskIdsResponse:
+      type: object
+      additionalProperties: false
+      required: [task_ids]
+      properties:
+        task_ids:
+          type: array
+          items: { type: string }

@@ -1,0 +1,321 @@
+openapi: 3.0.3
+info:
+  title: Auth Users Service (auth_users)
+  version: 0.1.0
+  description: >
+    MVP сервис авторизации и пользователей.
+    Поддерживает обычную регистрацию/логин, получение текущего пользователя по JWT,
+    а также internal-ручку для предсоздания кандидата без пароля (для interviews-сервиса).
+
+servers:
+  - url: http://localhost:8081
+    description: Local (examples)
+
+tags:
+  - name: Auth
+  - name: Users
+  - name: Internal
+
+paths:
+  /v1/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Регистрация или "дозарегистрация" (если кандидат был предсоздан без пароля)
+      description: >
+        Поведение:
+        - Если email не существует: создаётся новый пользователь (email уникален).
+        - Если email существует и password_hash IS NULL и role совпадает: устанавливается пароль ("дозарегистрация").
+        - Иначе: 409 email_taken.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+            examples:
+              createNew:
+                summary: Новая регистрация
+                value:
+                  email: hr1@test.com
+                  password: secret123
+                  name: Alice HR
+                  role: hr
+              completePendingCandidate:
+                summary: Дозарегистрация предсозданного кандидата
+                value:
+                  email: cand1@test.com
+                  password: secret123
+                  name: Bob Candidate
+                  role: candidate
+      responses:
+        "200":
+          description: Успешно, возвращает JWT и user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Неверный JSON или валидация данных
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidJson:
+                  value: { code: invalid_json, message: "invalid character '}' looking for beginning of object key string" }
+                badRequest:
+                  value: { code: bad_request, message: "validation: invalid email" }
+        "409":
+          description: Email уже занят (или роль не совпадает)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                emailTaken:
+                  value: { code: email_taken, message: "email already registered" }
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Логин
+      description: >
+        Возвращает JWT и user.
+        Если user предсоздан (password_hash IS NULL), логин не возможен — вернёт 401.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            examples:
+              login:
+                value:
+                  email: hr1@test.com
+                  password: secret123
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Неверный JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidJson:
+                  value: { code: invalid_json, message: "invalid character 'x' looking for beginning of value" }
+        "401":
+          description: Неверный email/пароль или пароль ещё не задан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidCredentials:
+                  value: { code: invalid_credentials, message: "invalid email or password" }
+
+  /v1/users/me:
+    get:
+      tags: [Users]
+      summary: Текущий пользователь
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Нет/битый JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unauthorized:
+                  value: { code: unauthorized, message: "missing bearer token" }
+        "404":
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { code: not_found, message: "user not found" }
+
+  /internal/users/precreate:
+    post:
+      tags: [Internal]
+      summary: Предсоздать кандидата без пароля (для interviews-svc)
+      description: >
+        Создаёт пользователя role=candidate с password_hash=NULL, если email не существует.
+        Если пользователь уже существует — возвращает его (идемпотентно).
+        Требует X-Internal-API-Key.
+      security:
+        - internalApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrecreateCandidateRequest"
+            examples:
+              precreate:
+                value:
+                  email: cand1@test.com
+                  name: Bob Candidate
+      responses:
+        "200":
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Неверный JSON или валидация данных
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                badRequest:
+                  value: { code: bad_request, message: "validation: invalid email" }
+        "403":
+          description: Неверный internal api key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbidden:
+                  value: { code: forbidden, message: "invalid internal api key" }
+        "409":
+          description: Email уже занят не-candidate пользователем (или несовместимое состояние)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                emailTaken:
+                  value: { code: email_taken, message: "email already used" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    internalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+
+  schemas:
+    Role:
+      type: string
+      enum: [hr, candidate]
+      description: Роль пользователя
+
+    SignupRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, name, role]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@test.com
+        password:
+          type: string
+          minLength: 6
+          example: secret123
+        name:
+          type: string
+          minLength: 1
+          example: Alice HR
+        role:
+          $ref: "#/components/schemas/Role"
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@test.com
+        password:
+          type: string
+          example: secret123
+
+    PrecreateCandidateRequest:
+      type: object
+      additionalProperties: false
+      required: [email, name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: cand1@test.com
+        name:
+          type: string
+          minLength: 1
+          example: Bob Candidate
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, name, role, created_at]
+      properties:
+        id:
+          type: string
+          description: UUID
+          example: 3c8b2d33-2c7f-49c2-9c4c-4f7e8c29b42c
+        email:
+          type: string
+          format: email
+          example: user@test.com
+        name:
+          type: string
+          example: Alice HR
+        role:
+          $ref: "#/components/schemas/Role"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-11-25T20:00:00Z"
+
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, user]
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+        token_type:
+          type: string
+          enum: [bearer]
+        user:
+          $ref: "#/components/schemas/User"
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: bad_request
+        message:
+          type: string
+          example: "validation: invalid email"
