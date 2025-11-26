@@ -1,4 +1,5 @@
 # rag_service/vector_store.py
+import uuid
 from enum import Enum
 from typing import Optional, Dict, Any, List
 
@@ -51,34 +52,41 @@ def save_task_to_vectorstore(
     level: LevelType,
     topic: Optional[str] = None,
     extra_meta: Optional[Dict[str, Any]] = None,
-) -> List[str]:
+    task_id: Optional[str] = None,
+) -> str:
     """
-    Сохраняет задачу в нужную векторку в зависимости от уровня.
-    Возвращает список id-шников, сгенерированных PGVector.
+    Сохраняет задачу в нужную векторку.
+    Генерирует task_id (uuid), если не передан.
+    Этот task_id будет:
+      - primary key в таблице pgvector
+      - лежать в metadata как "task_id"
     """
+    if task_id is None:
+        task_id = str(uuid.uuid4())
+
     vs = get_vectorstore_for_level(level)
 
-    metadata = {
-        "source": source,  # "user" | "generated"
+    metadata: Dict[str, Any] = {
+        "source": source,       # "user" или "generated"
         "level": level.value,
         "topic": topic,
+        "task_id": task_id,
     }
     if extra_meta:
         metadata.update(extra_meta)
 
-    ids = vs.add_texts(
+    vs.add_texts(
         texts=[text],
         metadatas=[metadata],
+        ids=[task_id],
     )
-    return ids
+
+    return task_id
 
 
 def similarity_search_for_level(
     level: LevelType, query: str, k: int = 5
 ) -> List[Document]:
-    """
-    Поиск похожих задач ТОЛЬКО в рамках одного уровня (junior/middle/senior).
-    """
     vs = get_vectorstore_for_level(level)
     return vs.similarity_search(query, k=k)
 
@@ -87,9 +95,6 @@ def similarity_search_all_levels(
     query: str,
     k_per_level: int = 2,
 ) -> List[Document]:
-    """
-    Для RAG в обычном чате — достаём понемного задач из каждой векторки.
-    """
     docs: List[Document] = []
     for level in LevelType:
         vs = get_vectorstore_for_level(level)
@@ -104,8 +109,11 @@ def format_docs_for_context(docs: List[Document]) -> str:
         topic = meta.get("topic")
         level = meta.get("level")
         source = meta.get("source")
+        task_id = meta.get("task_id")
 
         header = f"[Задача {i}"
+        if task_id:
+            header += f", id: {task_id}"
         if level:
             header += f", level: {level}"
         if topic:

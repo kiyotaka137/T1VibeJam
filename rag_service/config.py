@@ -33,5 +33,13 @@ class Settings(BaseSettings):
             f"@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
         )
 
+    @property
+    def pg_dsn(self) -> str:
+        # для asyncpg
+        return (
+            f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
+            f"@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
+        )
+
 
 settings = Settings()

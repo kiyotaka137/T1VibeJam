@@ -4,17 +4,28 @@ from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .intent import IntentType, detect_intent
-from .tasks import generate_task, maybe_save_generated_task, save_user_task
-from .rag import answer_with_rag
+from .tasks import (
+    generate_task,
+    create_user_task_with_tests,
+    create_generated_task_with_tests,
+)
 from .similar import find_similar_tasks
 from .vector_store import LevelType
+from .db_tests import init_tests_table, load_task_tests, TestCaseModel
 
 
 app = FastAPI(title="RAG Task Service")
 
 
-# ----- Модели запросов/ответов -----
+# ----- startup -----
+
+@app.on_event("startup")
+async def on_startup():
+    # инициализируем таблицу для тестов
+    await init_tests_table()
+
+
+# ----- Модели -----
 
 class ChatRequest(BaseModel):
     user_id: str | None = None
@@ -23,16 +34,18 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-    mode: str  # "SUBMIT", "GENERATE", "CHAT"
+    mode: str            # "SUBMIT" или "GENERATE"
+    task_id: str | None  # id задачи, если она была сохранена
 
 
 class SimilarRequest(BaseModel):
-    level: str  # "junior" | "middle" | "senior"
+    level: str           # "junior" | "middle" | "senior"
     description: str
     k: int = 5
 
 
 class SimilarTask(BaseModel):
+    task_id: str | None = None
     text: str
     topic: str | None = None
     level: str | None = None
@@ -42,6 +55,11 @@ class SimilarTask(BaseModel):
 class SimilarResponse(BaseModel):
     query: str
     tasks: List[SimilarTask]
+
+
+class TestsResponse(BaseModel):
+    task_id: str
+    tests: List[TestCaseModel]
 
 
 # ----- Префиксы для SUBMIT -----
@@ -67,7 +85,14 @@ def parse_level(level_str: str) -> LevelType:
 # ----- /chat -----
 
 @app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(req: ChatRequest):
+async def chat_endpoint(req: ChatRequest):
+    """
+    Логика теперь простая:
+    1) Если сообщение начинается с SUBMIT_JUNIOR/MIDDLE/SENIOR — считаем, что это готовая задача.
+       Сохраняем её в нужную коллекцию, генерируем тесты.
+    2) Всё остальное — считаем запросом на генерацию задачи.
+       Генерируем задачу, и если should_save=true, сохраняем + генерируем тесты.
+    """
     raw_message = req.message.strip()
 
     # 1) SUBMIT_JUNIOR / SUBMIT_MIDDLE / SUBMIT_SENIOR
@@ -78,33 +103,36 @@ def chat_endpoint(req: ChatRequest):
                 return ChatResponse(
                     reply="После префикса нужно написать текст задачи.",
                     mode="SUBMIT",
+                    task_id=None,
                 )
 
-            save_user_task(task_text, level)
+            task_id = await create_user_task_with_tests(task_text, level)
+
             return ChatResponse(
-                reply=f"Задачу уровня {level.value} сохранил в базу. "
-                      f"Могу сгенерировать похожую или помочь с решением.",
+                reply=(
+                    f"Задачу уровня {level.value} сохранил в базу "
+                    f"и сгенерировал для неё тесты (task_id: {task_id})."
+                ),
                 mode="SUBMIT",
+                task_id=task_id,
             )
 
-    # 2) Всё остальное — либо GENERATE_TASK, либо CHAT
-    intent = detect_intent(raw_message)
+    # 2) Всё остальное — генерация задачи
+    gen_task = await generate_task(raw_message)
+    task_id = await create_generated_task_with_tests(gen_task)
 
-    if intent == IntentType.GENERATE_TASK:
-        gen_task = generate_task(raw_message)
-        maybe_save_generated_task(gen_task)
-        reply = gen_task.task_text
-        return ChatResponse(reply=reply, mode="GENERATE")
-
-    # 3) CHAT
-    answer = answer_with_rag(raw_message)
-    return ChatResponse(reply=answer, mode="CHAT")
+    # task_id может быть None, если should_save = false
+    return ChatResponse(
+        reply=gen_task.task_text,
+        mode="GENERATE",
+        task_id=task_id,
+    )
 
 
 # ----- /similar -----
 
 @app.post("/similar", response_model=SimilarResponse)
-def similar_endpoint(req: SimilarRequest):
+async def similar_endpoint(req: SimilarRequest):
     try:
         level = parse_level(req.level)
     except ValueError:
@@ -113,7 +141,7 @@ def similar_endpoint(req: SimilarRequest):
             detail="level должен быть одним из: junior, middle, senior",
         )
 
-    query, docs = find_similar_tasks(
+    query, docs = await find_similar_tasks(
         level=level,
         description=req.description,
         k=req.k,
@@ -124,6 +152,7 @@ def similar_endpoint(req: SimilarRequest):
         meta = d.metadata or {}
         tasks.append(
             SimilarTask(
+                task_id=meta.get("task_id"),
                 text=d.page_content,
                 topic=meta.get("topic"),
                 level=meta.get("level"),
@@ -132,3 +161,17 @@ def similar_endpoint(req: SimilarRequest):
         )
 
     return SimilarResponse(query=query, tasks=tasks)
+
+
+# ----- /tests/{task_id} -----
+# Эту ручку будет дергать другой микросервис
+
+@app.get("/tests/{task_id}", response_model=TestsResponse)
+async def get_tests(task_id: str):
+    tests = await load_task_tests(task_id)
+    if tests is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Tests not found for this task_id",
+        )
+    return TestsResponse(task_id=task_id, tests=tests)
