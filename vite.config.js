@@ -4,13 +4,21 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: true,
+    host: true, // Нужно, чтобы Vite был доступен снаружи контейнера
     port: 5173,
     proxy: {
-      // Все запросы на /v1 будут улетать на бэкенд 8081
+      // 1. ИНТЕРВЬЮ (порт 8082)
+      '/v1/hr/interviews': {
+        // Внутри Docker вместо localhost используем host.docker.internal
+        target: 'http://host.docker.internal:8082', 
+        changeOrigin: true,
+        secure: false,
+      },
+
+      // 2. АВТОРИЗАЦИЯ (порт 8081)
       '/v1': {
-        target: 'http://host.docker.internal:8081', // Если запускаете в Docker
-        // target: 'http://localhost:8081', // Если запускаете просто локально без Docker
+        // Внутри Docker вместо localhost используем host.docker.internal
+        target: 'http://host.docker.internal:8081',
         changeOrigin: true,
         secure: false,
       }

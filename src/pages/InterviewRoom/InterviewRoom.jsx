@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   Loader2
 } from "lucide-react";
+import { api } from "../../services/api";
 
 import { EDITOR_LANGUAGES, DISPLAY_LANGUAGES, LANGUAGE_TEMPLATES } from "../../shared/constants/languages.js";
 import { INTERVIEW_TASKS } from "../../shared/mock/interviewTasks.js";
@@ -23,7 +24,13 @@ import { formatMMSS } from "../../shared/lib/time.js";
 import { useMainTimer } from "./hooks/useMainTimer.js";
 import { useResizablePanel } from "./hooks/useResizablePanel.js";
 
-export function InterviewRoom({ onExit }) {
+export function InterviewRoom({ onExit, inviteToken }) {
+  // --- Initialization Logic ---
+  const [isValidating, setIsValidating] = useState(!!inviteToken);
+  const [initError, setInitError] = useState(null);
+  const [interviewData, setInterviewData] = useState(null);
+
+  // --- Core State ---
   const [taskIndex, setTaskIndex] = useState(0);
   const [language, setLanguage] = useState("javascript");
   const [code, setCode] = useState(LANGUAGE_TEMPLATES["javascript"]);
@@ -46,9 +53,57 @@ export function InterviewRoom({ onExit }) {
 
   const [finished, setFinished] = useState(false);
 
-  const currentTask = useMemo(() => INTERVIEW_TASKS[taskIndex], [taskIndex]);
+  // 1. При старте: Проверяем токен и Клеймим инвайт
+  useEffect(() => {
+    if (!inviteToken) return;
 
-  const paused = finished || disqualified;
+    const startSession = async () => {
+      try {
+        setIsValidating(true);
+        // 1. Preview
+        const preview = await api.get(`/v1/invites/${inviteToken}`);
+        if (!preview.valid) throw new Error("Инвайт истёк или недействителен");
+
+        // 2. Claim (Simulate candidate login first if needed, here we just call claim)
+        // Для теста считаем, что кандидат авторизован. Если нет - тут нужно кидать на логин кандидата.
+        // Для демо "Claim" делаем от текущего юзера (mock).
+        localStorage.setItem("auth_token", "mock_candidate_jwt"); 
+        
+        const claim = await api.post(`/v1/invites/${inviteToken}/claim`);
+        
+        // Объединяем данные превью и клейма
+        setInterviewData({
+            ...claim,
+            level: preview.interview_preview?.level || "middle",
+            topics: preview.interview_preview?.topics || []
+        });
+
+      } catch (e) {
+        setInitError(e.message);
+      } finally {
+        setIsValidating(false);
+      }
+    };
+
+    startSession();
+  }, [inviteToken]);
+
+  // Фильтруем задачи на основе уровня из API
+  const filteredTasks = useMemo(() => {
+    // Если демо (нет токена) или данные еще не загружены - показываем все или дефолт
+    if (!inviteToken) return INTERVIEW_TASKS;
+    if (!interviewData) return [];
+
+    // Ищем задачи совпадающие по уровню
+    const level = interviewData.level.toLowerCase();
+    const tasks = INTERVIEW_TASKS.filter(t => t.difficulty.toLowerCase() === level);
+    
+    return tasks.length > 0 ? tasks : INTERVIEW_TASKS.slice(0, 2); // Fallback
+  }, [interviewData, inviteToken]);
+
+  const currentTask = useMemo(() => filteredTasks[taskIndex] || {}, [filteredTasks, taskIndex]);
+
+  const paused = finished || disqualified || isValidating;
   const { timeLeft, timedOut } = useMainTimer({ initialSeconds: 3600, paused });
 
   const { height: outputHeight, startResizing } = useResizablePanel({ initialHeight: 250 });
@@ -71,7 +126,7 @@ export function InterviewRoom({ onExit }) {
 
   // --- ЛОГИКА АНТИ-ЧИТА ---
   useEffect(() => {
-    if (finished || disqualified || timedOut) return;
+    if (finished || disqualified || timedOut || isValidating) return;
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
@@ -115,7 +170,7 @@ export function InterviewRoom({ onExit }) {
       document.body.removeEventListener("mouseenter", handleMouseEnter);
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [finished, disqualified, timedOut]);
+  }, [finished, disqualified, timedOut, isValidating]);
 
 
   const handleLanguageChange = (e) => {
@@ -149,7 +204,7 @@ export function InterviewRoom({ onExit }) {
           setTestStatus("passed_all");
 
           setTimeout(() => {
-            if (taskIndex < INTERVIEW_TASKS.length - 1) {
+            if (taskIndex < filteredTasks.length - 1) {
               setTaskIndex((p) => p + 1);
               setTestStatus("idle");
               setCode(LANGUAGE_TEMPLATES[language]);
@@ -176,6 +231,28 @@ export function InterviewRoom({ onExit }) {
     setInputMsg("");
   };
 
+  if (isValidating) {
+    return (
+      <div className="h-screen bg-slate-950 flex flex-col items-center justify-center text-white">
+        <Loader2 className="animate-spin mb-4" size={48} />
+        <h2 className="text-xl">Подготовка окружения...</h2>
+      </div>
+    );
+  }
+
+  if (initError) {
+    return (
+      <div className="h-screen bg-slate-950 flex flex-col items-center justify-center text-red-400 p-10 text-center">
+        <ShieldAlert size={64} className="mb-4" />
+        <h2 className="text-2xl font-bold mb-2">Ошибка доступа</h2>
+        <p className="mb-6">{initError}</p>
+        <button onClick={onExit} className="bg-slate-800 text-white px-6 py-2 rounded hover:bg-slate-700">
+          Вернуться на главную
+        </button>
+      </div>
+    );
+  }
+
   if (disqualified) {
     return (
       <div className="h-screen bg-red-950 flex flex-col items-center justify-center text-center p-10 font-sans relative z-50">
@@ -201,7 +278,7 @@ export function InterviewRoom({ onExit }) {
         <Clock size={80} className="text-orange-500 mb-6" />
         <h1 className="text-4xl text-white font-bold mb-4">Время вышло</h1>
         <p className="text-xl text-slate-300 mb-8 max-w-xl">
-          Вы не уложились в отведенное время (60 минут).
+          Вы не уложились в отведенное время.
         </p>
         <button
           onClick={onExit}
@@ -211,6 +288,11 @@ export function InterviewRoom({ onExit }) {
         </button>
       </div>
     );
+  }
+  
+  // Safety check if tasks are empty
+  if (!currentTask || !currentTask.title) {
+     return <div className="h-screen bg-slate-950 text-white flex items-center justify-center">Нет задач для этого уровня</div>;
   }
 
   return (
@@ -260,7 +342,7 @@ export function InterviewRoom({ onExit }) {
             <Clock size={12} /> {formatMMSS(timeLeft)}
           </span>
           <span className="text-xs text-slate-500">
-            Task {taskIndex + 1}/{INTERVIEW_TASKS.length}
+            Task {taskIndex + 1}/{filteredTasks.length}
           </span>
         </div>
 
@@ -451,7 +533,7 @@ export function InterviewRoom({ onExit }) {
             <div className="flex-1 p-4 font-mono text-sm overflow-y-auto custom-scrollbar">
               {testStatus === "idle" && (
                 <div className="space-y-3 opacity-50">
-                  {currentTask.visibleTests.map((test, idx) => (
+                  {currentTask.visibleTests?.map((test, idx) => (
                     <div key={idx} className="bg-slate-950 p-3 rounded border border-slate-800">
                       <div className="text-xs text-slate-500 mb-1">Case {idx + 1}</div>
                       <div>Input: {test.input}</div>
@@ -466,7 +548,7 @@ export function InterviewRoom({ onExit }) {
                   <div className="text-green-400 font-bold mb-2 flex items-center gap-2">
                     <CheckCircle2 size={16} /> Visible Tests Passed
                   </div>
-                  {currentTask.visibleTests.map((test, idx) => (
+                  {currentTask.visibleTests?.map((test, idx) => (
                     <div
                       key={idx}
                       className="bg-slate-950 p-3 rounded border border-green-900/50 flex justify-between items-center"

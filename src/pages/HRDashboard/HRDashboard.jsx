@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   ArrowUpFromLine,
   Calendar,
@@ -11,50 +11,74 @@ import {
   Tag,
   Terminal,
   Trophy,
+  Loader2
 } from "lucide-react";
+import { api } from "../../services/api"; // Импорт API хелпера
 
 export function HRDashboard({ onNavigateToInterview, onLogout }) {
   const [activeTab, setActiveTab] = useState("create");
   const [generatedLink, setGeneratedLink] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
   
-  // --- НОВОЕ ПОЛЕ: Имя кандидата ---
+  // --- Create Interview Fields ---
   const [candidateName, setCandidateName] = useState("");
-  const [interviewDifficulty, setInterviewDifficulty] = useState("Junior");
+  const [candidateEmail, setCandidateEmail] = useState(""); // Новое поле (обязательно для API)
+  const [interviewDifficulty, setInterviewDifficulty] = useState("middle");
 
-  // HISTORY
+  // --- HISTORY ---
   const [historyFilterStatus, setHistoryFilterStatus] = useState("all");
   const [historySort, setHistorySort] = useState("dateDesc");
+  const [historyData, setHistoryData] = useState([]); // Данные с бэкенда
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  const historyData = [
-    { id: 1, candidate: "Alexey I.", date: "2023-11-24", score: 85, status: "Completed" },
-    { id: 2, candidate: "Maria S.", date: "2023-11-25", score: 92, status: "Hire" },
-    { id: 3, candidate: "John D.", date: "2023-11-20", score: 45, status: "Rejected" },
-    { id: 4, candidate: "Ivan P.", date: "2023-11-26", score: 78, status: "Review" },
-  ];
+  // Загрузка истории при переключении таба
+  useEffect(() => {
+    if (activeTab === "history") {
+      fetchHistory();
+    }
+  }, [activeTab]);
+
+  const fetchHistory = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const response = await api.get("/v1/hr/interviews");
+      // Маппим ответ API в формат таблицы
+      const items = response.items.map(i => ({
+        id: i.id,
+        // API возвращает id, имя пока не возвращает в списке (нужен expand), пока выводим заглушку или ID
+        candidate: "Candidate " + i.candidate_user_id.slice(0, 6), 
+        date: new Date(i.created_at).toLocaleDateString(),
+        score: 0, // В API пока нет скора
+        status: i.status, // created, active, finished
+        rawDate: new Date(i.created_at)
+      }));
+      setHistoryData(items);
+    } catch (e) {
+      console.error("Failed to load history", e);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   const filteredHistory = useMemo(() => {
     let result = [...historyData];
+    // Фильтр по статусу (приводим к нижнему регистру для сравнения)
     if (historyFilterStatus !== "all") {
-      result = result.filter((item) => item.status === historyFilterStatus);
+      result = result.filter((item) => item.status.toLowerCase() === historyFilterStatus.toLowerCase());
     }
+    // Сортировка
     result.sort((a, b) => {
-      const dateA = new Date(a.date);
-      const dateB = new Date(b.date);
-      if (historySort === "dateDesc") return dateB - dateA;
-      if (historySort === "dateAsc") return dateA - dateB;
-      if (historySort === "scoreDesc") return b.score - a.score;
-      if (historySort === "scoreAsc") return a.score - b.score;
+      if (historySort === "dateDesc") return b.rawDate - a.rawDate;
+      if (historySort === "dateAsc") return a.rawDate - b.rawDate;
       return 0;
     });
     return result;
-  }, [historyFilterStatus, historySort]);
+  }, [historyData, historyFilterStatus, historySort]);
 
-  // BANK
+  // --- BANK (Local Mock) ---
   const [bankFilterDifficulty, setBankFilterDifficulty] = useState("All");
   const [bankFilterTag, setBankFilterTag] = useState("All");
-  
   const [llmDifficulty, setLlmDifficulty] = useState("Junior");
-
   const [manualTask, setManualTask] = useState({
     condition: "",
     tests: "",
@@ -71,11 +95,7 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
   ]);
 
   const handleAddTask = () => {
-    const newTags = manualTask.tags
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
+    const newTags = manualTask.tags.split(",").map((t) => t.trim()).filter(Boolean);
     const newTask = {
       id: Date.now(),
       title: "Новая задача (Manual)",
@@ -98,22 +118,43 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
     return matchDiff && matchTag;
   });
 
-  const generateLink = () => {
-    // Можно добавить валидацию имени, если нужно
-    // if (!candidateName.trim()) { alert("Введите имя кандидата"); return; }
+  // --- GENERATE LINK (API) ---
+  const generateLink = async () => {
+    if (!candidateName.trim() || !candidateEmail.trim()) { 
+        alert("Введите имя и email кандидата"); 
+        return; 
+    }
     
-    const uniqueId = Math.random().toString(36).substring(7);
-    // В реальном приложении имя кандидата уходило бы на бэкенд при создании ссылки
-    setGeneratedLink(`https://vibecode.io/interview/${uniqueId}?diff=${interviewDifficulty}&name=${encodeURIComponent(candidateName)}`);
+    setIsCreating(true);
+    try {
+        const payload = {
+            topics: ["general", "algorithms"], // Дефолтные темы
+            level: interviewDifficulty.toLowerCase(), // middle
+            planned_start: new Date().toISOString(),
+            planned_end: new Date(Date.now() + 7200000).toISOString(), // +2 часа
+            candidate: {
+                email: candidateEmail,
+                name: candidateName
+            },
+            invite_expires_minutes: 4320 // 3 дня
+        };
+
+        const res = await api.post("/v1/hr/interviews", payload);
+        // API возвращает invite_url
+        setGeneratedLink(res.invite_url);
+    } catch (error) {
+        alert("Ошибка создания: " + error.message);
+    } finally {
+        setIsCreating(false);
+    }
   };
 
   const getDifficultyColor = (diff) => {
-    switch (diff) {
-      case "Junior": return "bg-green-100 text-green-700";
-      case "Middle": return "bg-yellow-100 text-yellow-700";
-      case "Senior": return "bg-red-100 text-red-700";
-      default: return "bg-gray-100 text-gray-700";
-    }
+    const d = diff?.toLowerCase() || "";
+    if (d === "junior") return "bg-green-100 text-green-700";
+    if (d === "middle") return "bg-yellow-100 text-yellow-700";
+    if (d === "senior") return "bg-red-100 text-red-700";
+    return "bg-gray-100 text-gray-700";
   };
 
   return (
@@ -167,7 +208,6 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
             <h2 className="text-2xl font-bold mb-6 text-slate-800">Новое собеседование</h2>
 
             <div className="space-y-6">
-              {/* НОВОЕ ПОЛЕ: ФИО КАНДИДАТА */}
               <div>
                 <label className="block text-sm font-medium text-slate-600 mb-2">
                   ФИО Кандидата
@@ -183,6 +223,19 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
 
               <div>
                 <label className="block text-sm font-medium text-slate-600 mb-2">
+                  Email Кандидата
+                </label>
+                <input
+                  type="email"
+                  placeholder="ivan@example.com"
+                  className="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition"
+                  value={candidateEmail}
+                  onChange={(e) => setCandidateEmail(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-2">
                   Сложность
                 </label>
                 <select
@@ -190,24 +243,26 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                   value={interviewDifficulty}
                   onChange={(e) => setInterviewDifficulty(e.target.value)}
                 >
-                  <option>Junior</option>
-                  <option>Middle</option>
-                  <option>Senior</option>
+                  <option value="junior">Junior</option>
+                  <option value="middle">Middle</option>
+                  <option value="senior">Senior</option>
                 </select>
               </div>
 
               <button
                 onClick={generateLink}
-                className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+                disabled={isCreating}
+                className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition flex items-center justify-center gap-2"
               >
-                Сгенерировать ссылку
+                {isCreating ? <Loader2 className="animate-spin"/> : null}
+                {isCreating ? "Создание..." : "Сгенерировать ссылку"}
               </button>
 
               {generatedLink && (
                 <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between">
                   <div className="flex flex-col">
                     <span className="text-xs text-green-600 font-bold mb-1 uppercase">Ссылка готова</span>
-                    <span className="text-green-800 font-mono text-sm">{generatedLink}</span>
+                    <a href={generatedLink} target="_blank" rel="noreferrer" className="text-green-800 font-mono text-sm underline">{generatedLink}</a>
                   </div>
                   <button
                     onClick={onNavigateToInterview}
@@ -394,9 +449,10 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                   onChange={(e) => setHistoryFilterStatus(e.target.value)}
                 >
                   <option value="all">Все статусы</option>
-                  <option value="Completed">Completed</option>
-                  <option value="Hire">Hire</option>
-                  <option value="Rejected">Rejected</option>
+                  <option value="created">Created</option>
+                  <option value="active">Active</option>
+                  <option value="finished">Finished</option>
+                  <option value="canceled">Canceled</option>
                 </select>
                 <select
                   className="p-2 border rounded text-sm bg-gray-50"
@@ -405,12 +461,13 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                 >
                   <option value="dateDesc">Дата: Сначала новые</option>
                   <option value="dateAsc">Дата: Сначала старые</option>
-                  <option value="scoreDesc">Баллы: По убыванию</option>
-                  <option value="scoreAsc">Баллы: По возрастанию</option>
                 </select>
               </div>
             </div>
 
+            {isLoadingHistory ? (
+              <div className="text-center py-10 text-slate-500">Загрузка...</div>
+            ) : (
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b text-slate-500 text-sm uppercase">
@@ -429,15 +486,15 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                       <Calendar size={14} /> {item.date}
                     </td>
                     <td className="py-4 text-blue-600 font-bold flex items-center gap-1">
-                      <Trophy size={14} /> {item.score}/100
+                      <Trophy size={14} /> {item.score ? item.score + "/100" : "-"}
                     </td>
                     <td className="py-4">
                       <span
                         className={`px-2 py-1 rounded text-xs font-medium ${
-                          item.status === "Hire"
+                          item.status === "finished"
                             ? "bg-green-100 text-green-800"
-                            : item.status === "Rejected"
-                            ? "bg-red-100 text-red-800"
+                            : item.status === "active"
+                            ? "bg-blue-100 text-blue-800"
                             : "bg-gray-100 text-gray-800"
                         }`}
                       >
@@ -446,13 +503,14 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                     </td>
                     <td className="py-4">
                       <button className="text-blue-500 hover:text-blue-700 text-sm font-medium">
-                        Скачать отчет
+                        Детали
                       </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         )}
       </div>
