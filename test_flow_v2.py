@@ -217,6 +217,30 @@ def run_tests():
     print(f"{Colors.BOLD}>>> Тест: Генерация с плохим уровнем (ожидаем 400){Colors.ENDC}")
     client.post("/create_custom_task", {"level": "god_mode", "raw_text": "Task"}, expected_status=400)
 
+    # ==================================================================================
+    # СЦЕНАРИЙ NEW: Адаптивная генерация (Next Task)
+    # ==================================================================================
+    if 'ai_task' in created_tasks:
+        prev_id = created_tasks['ai_task']
+        print_section("NEW. Адаптивная генерация (Next Task)")
+
+        # Кейс: Решил ОЧЕНЬ быстро (5 минут) -> Должен повысить уровень или усложнить
+        print(f"{Colors.BOLD}>>> Симуляция: Юзер решил задачу Junior за 5 минут (Turbo mode){Colors.ENDC}")
+
+        status, next_data = client.post("/generate_next_task", {
+            "prev_task_id": prev_id,
+            "time_spent_sec": 300,  # 5 минут
+            "user_solution": "def solve(): return 'Fast Solution'"
+        })
+
+        if status == 200 and next_data.get("task_id"):
+            new_lvl = next_data.get("new_level")
+            print(f"{Colors.BOLD}✅ Next Task ID: {next_data['task_id']}{Colors.ENDC}")
+            print(f"New Level: {new_lvl} (Ожидалось повышение или Middle)")
+            print(f"Title: {next_data['task_data']['title']}")
+        else:
+            print(f"{Colors.FAIL}❌ Fail generating next task{Colors.ENDC}")
+
 
 if __name__ == "__main__":
     try:
