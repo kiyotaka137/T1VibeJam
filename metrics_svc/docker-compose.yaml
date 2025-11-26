@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: stats
+      POSTGRES_USER: stats
+      POSTGRES_PASSWORD: stats
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://stats:stats@db:5432/stats?sslmode=disable
+    volumes:
+      - ./migrations:/migrations:ro
+    command: >
+      sh -lc "set -e;
+      for f in /migrations/*.sql; do
+        echo applying $$f;
+        psql \"$$DATABASE_URL\" -v ON_ERROR_STOP=1 -f \"$$f\";
+      done;
+      echo migrations done"
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8080"
+      REQUEST_MAX_MB: "2"
+      DATABASE_URL: postgres://stats:stats@db:5432/stats?sslmode=disable
+
+      # internal write/read
+      INTERNAL_API_KEY: "superinternalkey-stats"
+
+      # optional JWT read-access for frontend (можно включить)
+      JWT_SECRET: "superjwtsecret"
+      JWT_ISSUER: "vibecode-auth"
+    ports:
+      - "8084:8080"
+
+volumes:
+  pgdata:
