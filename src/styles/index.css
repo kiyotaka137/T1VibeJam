@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* nice scrollbar */
+.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+.custom-scrollbar { scrollbar-color: #334155 transparent; scrollbar-width: thin; }
+
+/* warning overlay pulse */
+@keyframes pulseSoft { 0%,100%{opacity:1} 50%{opacity:0.75}}
+.animation-pulse { animation: pulseSoft 1s ease-in-out infinite; }
+
+@keyframes fadeInUp { from { opacity:0; transform: translateY(8px);} to { opacity:1; transform: translateY(0);} }
+.fade-in-up { animation: fadeInUp 220ms ease-out; }
