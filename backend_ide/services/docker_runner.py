@@ -15,7 +15,20 @@ def normalize_language(lang: str) -> str:
         return "cpp"
     return lang
 
-def run_in_docker(job_dir: str, language: str) -> dict:
+def compute_docker_timeout(tests_count: int) -> int:
+    base_overhead = 1.0       # сек
+    per_test_limit = 2.0      # сек на тест (синхронизируй с раннерами)
+    safety_factor = 1.3
+    hard_cap = 60.0
+
+    if tests_count <= 0:
+        return 10  # дефолт, если вдруг что-то пошло не так
+
+    timeout = base_overhead + per_test_limit * tests_count * safety_factor
+    timeout = max(5.0, min(hard_cap, timeout))  # не меньше 5, не больше 60
+    return int(timeout)
+
+def run_in_docker(job_dir: str, language: str, tests_count: int) -> dict:
     """
     Запускает Docker-контейнер с образом RUNNER_IMAGE.
     Внутри контейнера должен быть скрипт run_tests.py, который:
@@ -40,12 +53,14 @@ def run_in_docker(job_dir: str, language: str) -> dict:
         "/backend_ide/job",
     ]
 
+    docker_timeout = compute_docker_timeout(tests_count)
+
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=docker_timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as e:

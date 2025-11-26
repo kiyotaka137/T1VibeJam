@@ -43,7 +43,7 @@ async function main() {
     return;
   }
 
-  if (!solution || typeof solution.solve !== "function") {
+  if (!solution || typeof solution.main !== "function") {
     console.log(JSON.stringify({
       testsRun: 0,
       failures: 0,
@@ -52,7 +52,7 @@ async function main() {
       passed: 0,
       failure_details: [{
         test: 0,
-        traceback: "В модуле solution.js нет функции solve",
+        traceback: "В модуле solution.js нет функции main",
       }],
     }));
     return;
@@ -60,19 +60,19 @@ async function main() {
 
   const failures = [];
   let passed = 0;
+  let firstFailedIndex = null;
+  let firstFailedId = null;
+  let firstFailedType = null;
 
   for (let i = 0; i < cases.length; i++) {
     const c = cases[i];
-    const id = i;
+    const id = c.id || `case_${i + 1}`;
     const input = c.input;
     const expected = c.output;
-
     const args = Array.isArray(input) ? input : [input];
 
     try {
-      let result = solution.solve(...args);
-
-      // поддержка async solve
+      let result = solution.main(...args);
       if (result && typeof result.then === "function") {
         result = await result;
       }
@@ -85,6 +85,10 @@ async function main() {
           test: id,
           traceback: `Expected ${expectedNorm}, got ${actualNorm}`,
         });
+        firstFailedIndex = i;
+        firstFailedId = id;
+        firstFailedType = "wrong_answer";
+        break; 
       } else {
         passed++;
       }
@@ -93,6 +97,10 @@ async function main() {
         test: id,
         traceback: "Runtime error: " + String(e),
       });
+      firstFailedIndex = i;
+      firstFailedId = id;
+      firstFailedType = "runtime_error";
+      break;
     }
   }
 
@@ -103,11 +111,13 @@ async function main() {
     skipped: 0,
     passed,
     failure_details: failures,
+    first_failed_index: firstFailedIndex,
+    first_failed_id: firstFailedId,
+    first_failed_type: firstFailedType,
   };
 
-  // единственный console.log — итог раннера
   console.log(JSON.stringify(out));
-}
+};
 
 main().catch((e) => {
   console.log(JSON.stringify({

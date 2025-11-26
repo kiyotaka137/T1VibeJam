@@ -8,7 +8,7 @@ WORKDIR /backend_ide
 # RUN pip install --no-cache-dir ...
 
 # Кладём скрипт раннера внутрь образа
-COPY run_tests.py /backend_ide/run_tests.py
+COPY run_tests_py.py /backend_ide/runners/run_tests_py.py
 
 # По умолчанию контейнер выполняет этот скрипт
-ENTRYPOINT ["python", "/backend_ide/run_tests.py"]
+ENTRYPOINT ["python", "/backend_ide/runners/run_tests_py.py"]

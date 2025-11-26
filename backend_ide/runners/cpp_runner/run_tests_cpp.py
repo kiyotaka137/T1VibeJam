@@ -3,6 +3,21 @@ import os
 import subprocess
 import sys
 
+def _flatten(value):
+    """
+    Рекурсивно расплющивает вложенные списки/кортежи.
+    Примеры:
+      [1, 2, 3]           -> [1, 2, 3]
+      [[1, 2], 7]         -> [1, 2, 7]
+      [[[1], [2, 3]], 4]  -> [1, 2, 3, 4]
+    Строки НЕ трогаем (иначе разобьём на символы).
+    """
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _flatten(item)
+    else:
+        yield value
+
 
 def main(job_dir: str):
     # В job_dir лежат:
@@ -28,7 +43,7 @@ def main(job_dir: str):
             }],
         }, ensure_ascii=False))
         return
-
+ 
     # 2. Компилируем solution.cpp -> main
     compile_proc = subprocess.run(
         ["g++", "-std=c++17", "-O2", "solution.cpp", "-o", "main"],
@@ -52,17 +67,26 @@ def main(job_dir: str):
 
     failures = []
     passed = 0
+    first_failed_index = None
+    first_failed_id = None
+    first_failed_type = None
 
     # 3. Гоним тесты
     for idx, case in enumerate(cases):
+
         cid = idx+1
-        data_to_input = case.get("input", "")
-        stdin = " ".join(str(x) for x in data_to_input)
-        expected_out = case.get("output")
-        if expected_out is None:
-            expected_out = ""
+
+        raw_stdin = case.get("input", None)
+
+        if isinstance(raw_stdin, (list, tuple)):
+            tokens = list(_flatten(raw_stdin))
+            stdin = " ".join(str(x) for x in tokens)
         else:
-            expected_out = str(expected_out).strip()
+            stdin = "" if raw_stdin is None else str(raw_stdin)
+
+        expected_raw = case.get("output", None)
+
+        expected_out = "" if expected_raw is None else str(expected_raw).strip()
 
         try:
             proc = subprocess.run(
@@ -75,34 +99,47 @@ def main(job_dir: str):
         except subprocess.TimeoutExpired as e:
             failures.append({
                 "test": cid,
-                "traceback": f"Timeout: {repr(e)}"
+                "traceback": f"Timeout: {repr(e)}",
             })
-            continue
+            first_failed_index = idx
+            first_failed_id = cid
+            first_failed_type = "timeout"
+            break  
 
         if proc.returncode != 0:
             failures.append({
                 "test": cid,
-                "traceback": f"Non-zero exit code {proc.returncode}, stderr={proc.stderr!r}"
+                "traceback": f"Non-zero exit code {proc.returncode}, stderr={proc.stderr!r}",
             })
-            continue
+            first_failed_index = idx
+            first_failed_id = cid
+            first_failed_type = "runtime_error"
+            break  
 
-        actual = proc.stdout.strip()
+        actual = (proc.stdout or "").strip()
+
         if actual != expected_out:
             failures.append({
                 "test": cid,
-                "traceback": f"Expected {expected_out!r}, got {actual!r}"
+                "traceback": f"Expected {expected_out!r}, got {actual!r}",
             })
+            first_failed_index = idx
+            first_failed_id = cid
+            first_failed_type = "wrong_answer"
+            break
         else:
             passed += 1
 
-    tests_run = len(cases)
     out = {
-        "testsRun": tests_run,
+        "testsRun": len(cases),
         "failures": len(failures),
         "errors": 0,
         "skipped": 0,
         "passed": passed,
         "failure_details": failures,
+        "first_failed_index": first_failed_index,
+        "first_failed_id": first_failed_id,
+        "first_failed_type": first_failed_type,
     }
 
     print(json.dumps(out, ensure_ascii=False))
