@@ -156,9 +156,9 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                   value={interviewDifficulty}
                   onChange={(e) => setInterviewDifficulty(e.target.value)}
                 >
-                  <option>Easy</option>
-                  <option>Medium</option>
-                  <option>Hard</option>
+                  <option>Junior</option>
+                  <option>Middle</option>
+                  <option>Senior</option>
                 </select>
               </div>
 
@@ -218,9 +218,9 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                       value={manualTask.difficulty}
                       onChange={(e) => setManualTask({ ...manualTask, difficulty: e.target.value })}
                     >
-                      <option>Easy</option>
-                      <option>Medium</option>
-                      <option>Hard</option>
+                      <option>Junior</option>
+                      <option>Middle</option>
+                      <option>Senior</option>
                     </select>
                   </div>
 
@@ -243,9 +243,9 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                       onChange={(e) => setBankFilterDifficulty(e.target.value)}
                     >
                       <option value="All">Diff: All</option>
-                      <option value="Easy">Easy</option>
-                      <option value="Medium">Medium</option>
-                      <option value="Hard">Hard</option>
+                      <option value="Easy">Junior</option>
+                      <option value="Medium">Middle</option>
+                      <option value="Hard">Senior</option>
                     </select>
                     <select
                       className="text-xs border rounded p-1 max-w-[100px]"

@@ -1,85 +1,39 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
-import { createHttpClient } from "../../shared/api/http.js";
-import { createAuthApi } from "../../shared/api/auth.js";
+import React, { createContext, useContext, useState } from "react";
 
+// Создаем контекст
 const AuthContext = createContext(null);
 
-const AUTH_BASE_URL = import.meta.env.VITE_AUTH_BASE_URL;
+// Провайдер (Обертка)
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
 
-export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem("access_token"));
-  const [user, setUser] = useState(() => {
-    const raw = localStorage.getItem("me");
-    return raw ? JSON.parse(raw) : null;
-  });
-
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("me");
+  // Заглушки функций, чтобы LoginPage не ломалась
+  const login = async (email, password) => {
+    console.log("Mock Login called", email);
+    setUser({ email, role: 'hr' });
   };
 
-  const http = useMemo(
-    () =>
-      createHttpClient({
-        baseUrl: AUTH_BASE_URL,
-        getToken: () => token,
-        onUnauthorized: logout,
-      }),
-    [token]
-  );
+  const signup = async (data) => {
+    console.log("Mock Signup called", data);
+    setUser({ email: data.email, role: data.role });
+  };
 
-  const authApi = useMemo(() => createAuthApi(http), [http]);
+  const logout = () => {
+    setUser(null);
+  };
 
-  const api = useMemo(() => {
-    return {
-      user,
-      token,
+  // Значения, которые доступны в любом компоненте через useAuth()
+  const value = {
+    user,
+    login,
+    signup,
+    logout
+  };
 
-      async login(email, password) {
-        const data = await authApi.login({ email, password });
-        setToken(data.access_token);
-        localStorage.setItem("access_token", data.access_token);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
 
-        const me = await createAuthApi(
-          createHttpClient({
-            baseUrl: AUTH_BASE_URL,
-            getToken: () => data.access_token,
-          })
-        ).me();
-
-        setUser(me);
-        localStorage.setItem("me", JSON.stringify(me));
-        return me;
-      },
-
-      async signup({ email, password, name, role }) {
-        const data = await authApi.signup({ email, password, name, role });
-        setToken(data.access_token);
-        localStorage.setItem("access_token", data.access_token);
-
-        const me = await createAuthApi(
-          createHttpClient({
-            baseUrl: AUTH_BASE_URL,
-            getToken: () => data.access_token,
-          })
-        ).me();
-
-        setUser(me);
-        localStorage.setItem("me", JSON.stringify(me));
-        return me;
-      },
-
-      logout,
-    };
-  }, [authApi, token, user]);
-
-  return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider />");
-  return ctx;
-}
+// Хук для использования
+export const useAuth = () => {
+  return useContext(AuthContext);
+};

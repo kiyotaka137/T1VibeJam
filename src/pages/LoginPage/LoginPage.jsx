@@ -28,6 +28,7 @@ export function LoginPage({ onLogin }) {
     return "";
   };
 
+  // --- ОБНОВЛЕННАЯ ФУНКЦИЯ SUBMIT (MOCK) ---
   const submit = async () => {
     const msg = validate();
     if (msg) {
@@ -39,22 +40,25 @@ export function LoginPage({ onLogin }) {
       setError("");
       setLoading(true);
 
-      if (isRegister) {
-        // auth_users: POST /v1/auth/signup -> {access_token}
-        await auth.signup({
-          email: email.trim().toLowerCase(),
-          password,
-          name: name.trim(),
-          role,
-        });
-      } else {
-        // auth_users: POST /v1/auth/login -> {access_token}
-        await auth.login(email.trim().toLowerCase(), password);
-      }
+      // 1. Имитация задержки сети (1 секунда)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
+      console.log("✅ MOCK AUTH SUCCESS");
+      console.log("📥 Data:", isRegister ? { name, role, email } : { email });
+
+      /* --- ЗДЕСЬ БЫЛ РЕАЛЬНЫЙ ЗАПРОС (ОТКЛЮЧЕН) ---
+      if (isRegister) {
+        await auth.signup({ email, password, name, role });
+      } else {
+        await auth.login(email, password);
+      }
+      */
+
+      // 2. Вызываем коллбэк успешного входа
+      // Это переключит экран в App.jsx
       onLogin?.();
+
     } catch (e) {
-      // e.message у нас из APIError или обычной ошибки
       setError(e?.message || "Ошибка авторизации");
     } finally {
       setLoading(false);
@@ -135,10 +139,12 @@ export function LoginPage({ onLogin }) {
           </div>
         )}
 
+        {/* КНОПКА С TYPE="BUTTON" ДЛЯ НАДЕЖНОСТИ */}
         <button
+          type="button"
           onClick={submit}
           disabled={loading}
-          className={`w-full font-bold py-3 rounded transition mb-4 flex items-center justify-center gap-2 ${
+          className={`w-full font-bold py-3 rounded transition mb-4 flex items-center justify-center gap-2 cursor-pointer relative z-10 ${
             loading
               ? "bg-blue-600/60 cursor-not-allowed"
               : "bg-blue-600 hover:bg-blue-500"
@@ -155,27 +161,30 @@ export function LoginPage({ onLogin }) {
           )}
         </button>
 
-        <button
-          onClick={() => {
-            setError("");
-            setMode(isRegister ? "login" : "signup");
-          }}
-          className="w-full text-slate-400 hover:text-white text-sm flex items-center justify-center gap-2 transition"
-        >
-          {isRegister ? (
-            <>
-              <LogIn size={14} /> Уже есть аккаунт? Войти
-            </>
-          ) : (
-            <>
-              <UserPlus size={14} /> Нет аккаунта? Регистрация
-            </>
-          )}
-        </button>
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setMode(isRegister ? "login" : "signup");
+            }}
+            className="relative z-10 cursor-pointer w-full text-slate-400 hover:text-white text-sm flex items-center justify-center gap-2 transition p-2"
+          >
+            {isRegister ? (
+              <>
+                <LogIn size={14} /> Уже есть аккаунт? Войти
+              </>
+            ) : (
+              <>
+                <UserPlus size={14} /> Нет аккаунта? Регистрация
+              </>
+            )}
+          </button>
+        </div>
 
         {auth?.user && (
-          <div className="mt-6 text-xs text-slate-400">
-            Вы уже авторизованы как: <span className="text-white">{auth.user.email}</span>
+          <div className="mt-6 text-xs text-slate-400 text-center">
+            Вы уже авторизованы как: <br/> <span className="text-white font-mono">{auth.user.email}</span>
           </div>
         )}
       </div>
