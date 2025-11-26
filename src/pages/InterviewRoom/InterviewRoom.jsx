@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import {
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   Play,
   Send,
   ShieldAlert,
+  Loader2
 } from "lucide-react";
 
 import { EDITOR_LANGUAGES, DISPLAY_LANGUAGES, LANGUAGE_TEMPLATES } from "../../shared/constants/languages.js";
@@ -21,7 +22,6 @@ import { INTERVIEW_TASKS } from "../../shared/mock/interviewTasks.js";
 import { formatMMSS } from "../../shared/lib/time.js";
 import { useMainTimer } from "./hooks/useMainTimer.js";
 import { useResizablePanel } from "./hooks/useResizablePanel.js";
-import { useAntiCheat } from "./hooks/useAntiCheat.js";
 
 export function InterviewRoom({ onExit }) {
   const [taskIndex, setTaskIndex] = useState(0);
@@ -29,7 +29,7 @@ export function InterviewRoom({ onExit }) {
   const [code, setCode] = useState(LANGUAGE_TEMPLATES["javascript"]);
   const [leftTab, setLeftTab] = useState("task");
 
-  const [testStatus, setTestStatus] = useState("idle"); // idle|running|passed_visible|checking_hidden|passed_all
+  const [testStatus, setTestStatus] = useState("idle");
   const [hiddenProgress, setHiddenProgress] = useState(0);
 
   const [messages, setMessages] = useState([
@@ -37,8 +37,13 @@ export function InterviewRoom({ onExit }) {
   ]);
   const [inputMsg, setInputMsg] = useState("");
 
+  // --- STATE: ANTI-CHEAT ---
   const [disqualified, setDisqualified] = useState(false);
   const [disqReason, setDisqReason] = useState("");
+  const [cheatWarning, setCheatWarning] = useState(false);
+  const [timerCount, setTimerCount] = useState(3);
+  const timerRef = useRef(null);
+
   const [finished, setFinished] = useState(false);
 
   const currentTask = useMemo(() => INTERVIEW_TASKS[taskIndex], [taskIndex]);
@@ -48,14 +53,70 @@ export function InterviewRoom({ onExit }) {
 
   const { height: outputHeight, startResizing } = useResizablePanel({ initialHeight: 250 });
 
-  const { cheatWarning, timerCount } = useAntiCheat({
-    enabled: !finished && !disqualified && !timedOut,
-    thresholdSeconds: 4,
-    onDisqualify: (reason) => {
-      setDisqualified(true);
-      setDisqReason(reason);
-    },
-  });
+  // --- ЛОГИКА ЦВЕТОВ СЛОЖНОСТИ ---
+  const getDifficultyColor = (difficulty) => {
+    const diff = difficulty?.toLowerCase() || "";
+    
+    if (diff === "junior" || diff === "easy") {
+      return "bg-green-900 text-green-300 border border-green-700";
+    }
+    if (diff === "middle" || diff === "medium") {
+      return "bg-yellow-900 text-yellow-300 border border-yellow-700";
+    }
+    if (diff === "senior" || diff === "hard") {
+      return "bg-red-900 text-red-300 border border-red-700";
+    }
+    return "bg-slate-800 text-slate-400 border border-slate-600";
+  };
+
+  // --- ЛОГИКА АНТИ-ЧИТА ---
+  useEffect(() => {
+    if (finished || disqualified || timedOut) return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setDisqualified(true);
+        setDisqReason("Вы свернули окно или переключили вкладку. Собеседование прекращено.");
+      }
+    };
+
+    const handleMouseLeave = () => {
+      setCheatWarning(true);
+      setTimerCount(3);
+
+      if (timerRef.current) clearInterval(timerRef.current);
+
+      timerRef.current = setInterval(() => {
+        setTimerCount((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerRef.current);
+            setDisqualified(true);
+            setDisqReason("Курсор находился вне рабочей области более 3 секунд.");
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    };
+
+    const handleMouseEnter = () => {
+      setCheatWarning(false);
+      setTimerCount(3);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.body.addEventListener("mouseleave", handleMouseLeave);
+    document.body.addEventListener("mouseenter", handleMouseEnter);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.body.removeEventListener("mouseleave", handleMouseLeave);
+      document.body.removeEventListener("mouseenter", handleMouseEnter);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [finished, disqualified, timedOut]);
+
 
   const handleLanguageChange = (e) => {
     const lang = e.target.value;
@@ -117,7 +178,7 @@ export function InterviewRoom({ onExit }) {
 
   if (disqualified) {
     return (
-      <div className="h-screen bg-red-950 flex flex-col items-center justify-center text-center p-10 font-sans">
+      <div className="h-screen bg-red-950 flex flex-col items-center justify-center text-center p-10 font-sans relative z-50">
         <ShieldAlert size={80} className="text-red-500 mb-6" />
         <h1 className="text-4xl text-white font-bold mb-4">Собеседование прекращено</h1>
         <p className="text-xl text-red-200 mb-8 max-w-xl">
@@ -136,7 +197,7 @@ export function InterviewRoom({ onExit }) {
 
   if (timedOut) {
     return (
-      <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-center p-10 font-sans">
+      <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-center p-10 font-sans relative z-50">
         <Clock size={80} className="text-orange-500 mb-6" />
         <h1 className="text-4xl text-white font-bold mb-4">Время вышло</h1>
         <p className="text-xl text-slate-300 mb-8 max-w-xl">
@@ -161,10 +222,12 @@ export function InterviewRoom({ onExit }) {
       onPaste={preventCopyPaste}
     >
       {cheatWarning && (
-        <div className="absolute inset-0 z-50 bg-red-900/90 flex flex-col items-center justify-center backdrop-blur-sm animation-pulse">
-          <AlertTriangle size={100} className="text-white mb-4" />
-          <h2 className="text-4xl font-bold text-white text-center">ВЕРНИТЕ КУРСОР!</h2>
-          <p className="text-white text-xl mt-4 font-bold">Прерывание через {timerCount}...</p>
+        <div className="absolute inset-0 z-50 bg-red-900/95 flex flex-col items-center justify-center backdrop-blur-sm">
+          <AlertTriangle size={100} className="text-white mb-6 animate-bounce" />
+          <h2 className="text-5xl font-bold text-white text-center mb-4">ВЕРНИТЕ КУРСОР!</h2>
+          <p className="text-red-200 text-2xl font-bold">
+            Блокировка через: <span className="text-white text-4xl">{timerCount}</span>
+          </p>
         </div>
       )}
 
@@ -205,7 +268,7 @@ export function InterviewRoom({ onExit }) {
           <button
             onClick={handleRun}
             disabled={testStatus === "running"}
-            className="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-sm text-white flex items-center gap-2 transition"
+            className="bg-emerald-700 hover:bg-emerald-600 px-3 py-1.5 rounded text-sm text-white flex items-center gap-2 transition font-medium"
           >
             <Play size={14} /> Run
           </button>
@@ -264,12 +327,12 @@ export function InterviewRoom({ onExit }) {
               <div className="prose prose-invert prose-sm max-w-none">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-white text-xl m-0">{currentTask.title}</h2>
+                  
+                  {/* ОБНОВЛЕННАЯ ПЛАШКА СЛОЖНОСТИ */}
                   <span
-                    className={`text-xs px-2 py-1 rounded uppercase font-bold ${
-                      currentTask.difficulty === "Easy"
-                        ? "bg-green-900 text-green-300"
-                        : "bg-yellow-900 text-yellow-300"
-                    }`}
+                    className={`text-xs px-2 py-1 rounded uppercase font-bold ${getDifficultyColor(
+                      currentTask.difficulty
+                    )}`}
                   >
                     {currentTask.difficulty}
                   </span>
@@ -350,10 +413,16 @@ export function InterviewRoom({ onExit }) {
               language={language}
               value={code}
               onChange={(value) => setCode(value ?? "")}
+              loading={
+                <div className="flex items-center justify-center h-full text-slate-500 gap-2">
+                  <Loader2 className="animate-spin" /> Загрузка IDE...
+                </div>
+              }
               options={{
                 minimap: { enabled: false },
                 fontSize: 14,
                 automaticLayout: true,
+                scrollBeyondLastLine: false,
               }}
             />
           </div>

@@ -16,7 +16,10 @@ import {
 export function HRDashboard({ onNavigateToInterview, onLogout }) {
   const [activeTab, setActiveTab] = useState("create");
   const [generatedLink, setGeneratedLink] = useState("");
-  const [interviewDifficulty, setInterviewDifficulty] = useState("Easy");
+  
+  // --- НОВОЕ ПОЛЕ: Имя кандидата ---
+  const [candidateName, setCandidateName] = useState("");
+  const [interviewDifficulty, setInterviewDifficulty] = useState("Junior");
 
   // HISTORY
   const [historyFilterStatus, setHistoryFilterStatus] = useState("all");
@@ -49,19 +52,22 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
   // BANK
   const [bankFilterDifficulty, setBankFilterDifficulty] = useState("All");
   const [bankFilterTag, setBankFilterTag] = useState("All");
+  
+  const [llmDifficulty, setLlmDifficulty] = useState("Junior");
+
   const [manualTask, setManualTask] = useState({
     condition: "",
     tests: "",
-    difficulty: "Easy",
+    difficulty: "Junior",
     tags: "",
   });
 
   const [tasksData, setTasksData] = useState([
-    { id: 1, title: "Two Sum", difficulty: "Easy", tags: ["Array", "Hash Table"] },
-    { id: 2, title: "LRU Cache", difficulty: "Hard", tags: ["Design", "Linked List"] },
-    { id: 3, title: "Valid Parentheses", difficulty: "Easy", tags: ["Stack", "String"] },
-    { id: 4, title: "Merge Intervals", difficulty: "Medium", tags: ["Array", "Sorting"] },
-    { id: 5, title: "Network Delay Time", difficulty: "Medium", tags: ["Graph", "BFS"] },
+    { id: 1, title: "Two Sum", difficulty: "Junior", tags: ["Array", "Hash Table"] },
+    { id: 2, title: "LRU Cache", difficulty: "Senior", tags: ["Design", "Linked List"] },
+    { id: 3, title: "Valid Parentheses", difficulty: "Junior", tags: ["Stack", "String"] },
+    { id: 4, title: "Merge Intervals", difficulty: "Middle", tags: ["Array", "Sorting"] },
+    { id: 5, title: "Network Delay Time", difficulty: "Middle", tags: ["Graph", "BFS"] },
   ]);
 
   const handleAddTask = () => {
@@ -77,7 +83,7 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
       tags: newTags.length ? newTags : ["General"],
     };
     setTasksData([newTask, ...tasksData]);
-    setManualTask({ condition: "", tests: "", difficulty: "Easy", tags: "" });
+    setManualTask({ condition: "", tests: "", difficulty: "Junior", tags: "" });
   };
 
   const allTags = useMemo(() => {
@@ -93,8 +99,21 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
   });
 
   const generateLink = () => {
+    // Можно добавить валидацию имени, если нужно
+    // if (!candidateName.trim()) { alert("Введите имя кандидата"); return; }
+    
     const uniqueId = Math.random().toString(36).substring(7);
-    setGeneratedLink(`https://vibecode.io/interview/${uniqueId}?diff=${interviewDifficulty}`);
+    // В реальном приложении имя кандидата уходило бы на бэкенд при создании ссылки
+    setGeneratedLink(`https://vibecode.io/interview/${uniqueId}?diff=${interviewDifficulty}&name=${encodeURIComponent(candidateName)}`);
+  };
+
+  const getDifficultyColor = (diff) => {
+    switch (diff) {
+      case "Junior": return "bg-green-100 text-green-700";
+      case "Middle": return "bg-yellow-100 text-yellow-700";
+      case "Senior": return "bg-red-100 text-red-700";
+      default: return "bg-gray-100 text-gray-700";
+    }
   };
 
   return (
@@ -142,11 +161,26 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
       </div>
 
       <div className="flex-1 p-10 overflow-y-auto">
+        {/* TAB: CREATE */}
         {activeTab === "create" && (
           <div className="bg-white p-8 rounded-xl shadow-sm max-w-2xl border border-gray-100">
             <h2 className="text-2xl font-bold mb-6 text-slate-800">Новое собеседование</h2>
 
             <div className="space-y-6">
+              {/* НОВОЕ ПОЛЕ: ФИО КАНДИДАТА */}
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-2">
+                  ФИО Кандидата
+                </label>
+                <input
+                  type="text"
+                  placeholder="Иванов Иван Иванович"
+                  className="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition"
+                  value={candidateName}
+                  onChange={(e) => setCandidateName(e.target.value)}
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-600 mb-2">
                   Сложность
@@ -171,7 +205,10 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
 
               {generatedLink && (
                 <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between">
-                  <span className="text-green-800 font-mono text-sm">{generatedLink}</span>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-green-600 font-bold mb-1 uppercase">Ссылка готова</span>
+                    <span className="text-green-800 font-mono text-sm">{generatedLink}</span>
+                  </div>
                   <button
                     onClick={onNavigateToInterview}
                     className="text-sm bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
@@ -184,9 +221,12 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
           </div>
         )}
 
+        {/* TAB: BANK */}
         {activeTab === "bank" && (
           <div className="grid grid-cols-2 gap-6 h-[650px]">
+            {/* LEFT COLUMN */}
             <div className="flex flex-col gap-6">
+              {/* Add Manual Task */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                 <h3 className="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2">
                   <ArrowUpFromLine size={18} /> Добавить задачу
@@ -233,6 +273,7 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                 </div>
               </div>
 
+              {/* Task List */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex-1 overflow-hidden flex flex-col">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-bold text-slate-800">Банк задач</h3>
@@ -243,9 +284,9 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                       onChange={(e) => setBankFilterDifficulty(e.target.value)}
                     >
                       <option value="All">Diff: All</option>
-                      <option value="Easy">Junior</option>
-                      <option value="Medium">Middle</option>
-                      <option value="Hard">Senior</option>
+                      <option value="Junior">Junior</option>
+                      <option value="Middle">Middle</option>
+                      <option value="Senior">Senior</option>
                     </select>
                     <select
                       className="text-xs border rounded p-1 max-w-[100px]"
@@ -272,13 +313,7 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                           {task.title}
                         </span>
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${
-                            task.difficulty === "Easy"
-                              ? "bg-green-100 text-green-700"
-                              : task.difficulty === "Medium"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-red-100 text-red-700"
-                          }`}
+                          className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${getDifficultyColor(task.difficulty)}`}
                         >
                           {task.difficulty}
                         </span>
@@ -304,6 +339,7 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
               </div>
             </div>
 
+            {/* RIGHT COLUMN: LLM CHAT */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
               <h3 className="font-bold mb-4 flex items-center gap-2 text-slate-800">
                 <Terminal size={18} /> Генератор (Scibox LLM)
@@ -317,15 +353,25 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
                 <div className="mb-4 text-right">
                   <p className="text-green-400 font-bold mb-1">HR:</p>
                   <span className="bg-slate-800 px-3 py-2 rounded text-white inline-block">
-                    Задача на жадные алгоритмы
+                    Задача на жадные алгоритмы (Middle)
                   </span>
                 </div>
               </div>
 
               <div className="flex gap-2">
+                <select 
+                  className="w-1/4 p-2 border rounded bg-gray-50 text-sm outline-none cursor-pointer"
+                  value={llmDifficulty}
+                  onChange={(e) => setLlmDifficulty(e.target.value)}
+                >
+                  <option>Junior</option>
+                  <option>Middle</option>
+                  <option>Senior</option>
+                </select>
+
                 <input
                   type="text"
-                  placeholder="Запрос к AI..."
+                  placeholder="Тема задачи..."
                   className="flex-1 p-2 border rounded bg-gray-50 outline-none"
                 />
                 <button className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
@@ -336,6 +382,7 @@ export function HRDashboard({ onNavigateToInterview, onLogout }) {
           </div>
         )}
 
+        {/* TAB: HISTORY */}
         {activeTab === "history" && (
           <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100">
             <div className="flex justify-between items-center mb-6">
