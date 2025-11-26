@@ -9,18 +9,21 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 from .config import settings
-from .db_storage import LevelType, save_generated_task_to_db, TaskDBModel
+from .db_storage import LevelType, save_generated_task_to_db, TaskDBModel, get_full_task_by_id
 from .vector_store import save_task_to_vectorstore
-# Импортируем новые промпты
+# Импортируем все промпты, включая новый ADAPTIVE
 from .prompts_const import (
     TASK_GEN_SYSTEM_PROMPT, TASK_GEN_USER_TEMPLATE,
-    TASK_REFINE_SYSTEM_PROMPT, TASK_REFINE_USER_TEMPLATE
+    TASK_REFINE_SYSTEM_PROMPT, TASK_REFINE_USER_TEMPLATE,
+    TASK_ADAPTIVE_SYSTEM_PROMPT, TASK_ADAPTIVE_USER_TEMPLATE
 )
 
-# --- Модели генератора ---
+
+# --- Модели генератора (Pydantic) ---
 class GenTestCase(BaseModel):
     input: str
     output: str
+
 
 class TaskStructure(BaseModel):
     title: str = Field(description="Заголовок")
@@ -33,6 +36,8 @@ class TaskStructure(BaseModel):
     initial_code_cpp: str = Field(description="C++ template")
     test_cases: List[GenTestCase] = Field(description="Tests")
 
+
+# --- Класс Генератора ---
 class TaskGenerator:
     def __init__(self):
         self.llm = ChatOpenAI(
@@ -45,73 +50,13 @@ class TaskGenerator:
         self.parser = JsonOutputParser(pydantic_object=TaskStructure)
 
     def _clean(self, text: str) -> str:
+        """Очистка ответа от тегов <think> и markdown блоков"""
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         match = re.search(r'```json\s*(.*?)\s*```', text, flags=re.DOTALL)
         if match: return match.group(1)
         start, end = text.find('{'), text.rfind('}')
         if start != -1 and end != -1: return text[start: end + 1]
         return text
-
-    async def generate(self, grade: str, topic: str) -> Optional[TaskStructure]:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", TASK_GEN_SYSTEM_PROMPT),
-            ("user", TASK_GEN_USER_TEMPLATE),
-        ])
-        formatted = await prompt.ainvoke({
-            "grade": grade, "topic": topic,
-            "format_instructions": self.parser.get_format_instructions()
-        })
-        try:
-            print(f"   >>> Generating task ({settings.CODER_MODEL})...")
-            resp = await self.llm.ainvoke(formatted)
-            data = self.parser.parse(self._clean(resp.content))
-            return TaskStructure(**data)
-        except Exception as e:
-            print(f"Gen Error: {e}")
-            return None
-
-class TaskGenerator:
-    def __init__(self):
-        self.llm = ChatOpenAI(
-            base_url=settings.BASE_URL,
-            api_key=settings.API_KEY,
-            model=settings.CODER_MODEL,
-            temperature=0.6, # Чуть меньше креатива, больше точности
-            max_tokens=2000,
-        )
-        self.parser = JsonOutputParser(pydantic_object=TaskStructure)
-
-    def _clean(self, text: str) -> str:
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-        match = re.search(r'```json\s*(.*?)\s*```', text, flags=re.DOTALL)
-        if match: return match.group(1)
-        start, end = text.find('{'), text.rfind('}')
-        if start != -1 and end != -1: return text[start: end + 1]
-        return text
-
-    # Старый метод (генерация с нуля)
-    async def generate(self, grade: str, topic: str) -> Optional[TaskStructure]:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", TASK_GEN_SYSTEM_PROMPT),
-            ("user", TASK_GEN_USER_TEMPLATE),
-        ])
-        formatted = await prompt.ainvoke({
-            "grade": grade, "topic": topic,
-            "format_instructions": self.parser.get_format_instructions()
-        })
-        return await self._run_llm(formatted)
-
-    # НОВЫЙ МЕТОД (доработка сырого текста)
-    async def refine(self, grade: str, raw_text: str) -> Optional[TaskStructure]:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", TASK_REFINE_SYSTEM_PROMPT),
-            ("user", TASK_REFINE_USER_TEMPLATE),
-        ])
-        formatted = await prompt.ainvoke({
-            "grade": grade, "raw_text": raw_text,
-            "format_instructions": self.parser.get_format_instructions()
-        })
-        return await self._run_llm(formatted)
 
     async def _run_llm(self, formatted_prompt) -> Optional[TaskStructure]:
         try:
@@ -123,61 +68,162 @@ class TaskGenerator:
             print(f"LLM Error: {e}")
             return None
 
+    # 1. Генерация по теме (Standard)
+    async def generate(self, grade: str, topic: str) -> Optional[TaskStructure]:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", TASK_GEN_SYSTEM_PROMPT),
+            ("user", TASK_GEN_USER_TEMPLATE),
+        ])
+        formatted = await prompt.ainvoke({
+            "grade": grade, "topic": topic,
+            "format_instructions": self.parser.get_format_instructions()
+        })
+        return await self._run_llm(formatted)
+
+    # 2. Улучшение текста HR (Refine)
+    async def refine(self, grade: str, raw_text: str) -> Optional[TaskStructure]:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", TASK_REFINE_SYSTEM_PROMPT),
+            ("user", TASK_REFINE_USER_TEMPLATE),
+        ])
+        formatted = await prompt.ainvoke({
+            "grade": grade, "raw_text": raw_text,
+            "format_instructions": self.parser.get_format_instructions()
+        })
+        return await self._run_llm(formatted)
+
+    # 3. Адаптивная генерация (Adaptive)
+    async def generate_adaptive(
+            self,
+            prev_task: dict,
+            user_code: str,
+            time_minutes: float,
+            new_level: str
+    ) -> Optional[TaskStructure]:
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", TASK_ADAPTIVE_SYSTEM_PROMPT),
+            ("user", TASK_ADAPTIVE_USER_TEMPLATE),
+        ])
+
+        formatted = await prompt.ainvoke({
+            "prev_title": prev_task.get("title", "Unknown"),
+            "prev_level": prev_task.get("level", "unknown"),
+            "time_spent": f"{time_minutes:.1f}",
+            "user_code": user_code,
+            "new_level": new_level,
+            "format_instructions": self.parser.get_format_instructions()
+        })
+
+        return await self._run_llm(formatted)
+
+
 generator = TaskGenerator()
 
+
+# --- Вспомогательная логика ---
+
+def calculate_next_level(current_level: LevelType, minutes: float) -> LevelType:
+    """Определяет следующий уровень сложности на основе времени решения"""
+    levels = [LevelType.JUNIOR, LevelType.MIDDLE, LevelType.SENIOR]
+
+    try:
+        idx = levels.index(current_level)
+    except ValueError:
+        return LevelType.JUNIOR  # Fallback
+
+    if minutes < 15:
+        # Быстро -> Повышаем (если возможно)
+        new_idx = min(idx + 1, len(levels) - 1)
+    elif minutes > 35:
+        # Долго -> Понижаем (если возможно)
+        new_idx = max(idx - 1, 0)
+    else:
+        # Нормально -> Оставляем тот же
+        new_idx = idx
+
+    return levels[new_idx]
+
+
+# --- Workflows (Бизнес-логика) ---
+
 async def generate_task_workflow(level: LevelType, topic: str) -> tuple[Optional[str], Optional[TaskStructure]]:
-    # 1. Генерация
+    """Генерация обычной задачи"""
     task_data = await generator.generate(level.value, topic)
     if not task_data: return None, None
 
-    # 2. Создаем ID
     task_id = str(uuid.uuid4())
-
-    # 3. Сохраняем в SQL (Полная инфа)
-    db_model = TaskDBModel(
-        task_id=task_id,
-        title=task_data.title,
-        description=task_data.description,
-        input_description=task_data.input_description,
-        output_description=task_data.output_description,
-        constraints=task_data.constraints,
-        function_name=task_data.function_name,
-        initial_code_python=task_data.initial_code_python,
-        initial_code_cpp=task_data.initial_code_cpp,
-        test_cases=task_data.test_cases
-    )
-    await save_generated_task_to_db(level, db_model)
-
-    # 4. Сохраняем в Vector Store (Индекс для поиска)
-    try:
-        search_text = f"{task_data.title}\n{task_data.description}"
-        save_task_to_vectorstore(
-            text=search_text,
-            source="generated",
-            level=level,
-            topic=topic,
-            task_id=task_id, # Тот же ID
-            extra_meta={"title": task_data.title}
-        )
-    except Exception as e:
-        print(f"Vector save warning: {e}")
+    await _save_task_full(task_id, task_data, level, source="generated", topic=topic)
 
     return task_id, task_data
 
-# НОВАЯ ФУНКЦИЯ WORKFLOW
+
 async def create_custom_task_workflow(level: LevelType, raw_text: str) -> tuple[Optional[str], Optional[TaskStructure]]:
-    """
-    1. Улучшает сырой текст через LLM.
-    2. Сохраняет в SQL и Vector.
-    """
-    # 1. Refine (улучшение)
+    """Создание задачи из текста HR"""
     task_data = await generator.refine(level.value, raw_text)
     if not task_data: return None, None
 
-    # 2. ID
     task_id = str(uuid.uuid4())
+    await _save_task_full(task_id, task_data, level, source="custom_hr", topic="Custom")
 
-    # 3. SQL
+    return task_id, task_data
+
+
+async def generate_next_task_workflow(
+        prev_task_id: str,
+        time_spent_sec: int,
+        user_code: str
+) -> tuple[Optional[str], Optional[TaskStructure], Optional[str]]:
+    """
+    Адаптивная генерация следующей задачи.
+    Возвращает: (new_task_id, task_data, new_level_str)
+    """
+    # 1. Получаем данные о прошлой задаче
+    prev_task_data = await get_full_task_by_id(prev_task_id)
+    if not prev_task_data:
+        print(f"⚠️ Previous task {prev_task_id} not found in DB")
+        return None, None, None
+
+    # Парсим уровень прошлой задачи
+    try:
+        current_level = LevelType(prev_task_data.get("level", "junior"))
+    except:
+        current_level = LevelType.JUNIOR
+
+    # 2. Вычисляем новый уровень
+    minutes = time_spent_sec / 60.0
+    new_level = calculate_next_level(current_level, minutes)
+    print(f"   >>> Adaptive Logic: {minutes:.1f} min. Level: {current_level.value} -> {new_level.value}")
+
+    # 3. Генерируем новую задачу
+    task_data = await generator.generate_adaptive(
+        prev_task=prev_task_data,
+        user_code=user_code,
+        time_minutes=minutes,
+        new_level=new_level.value
+    )
+
+    if not task_data: return None, None, None
+
+    # 4. Сохраняем
+    task_id = str(uuid.uuid4())
+    # Тему берем от родителя, чтобы контекст сохранялся в метаданных вектора
+    topic = prev_task_data.get("title", "Adaptive")
+
+    await _save_task_full(task_id, task_data, new_level, source="ai_adaptive", topic=topic)
+
+    return task_id, task_data, new_level.value
+
+
+async def _save_task_full(
+        task_id: str,
+        task_data: TaskStructure,
+        level: LevelType,
+        source: str,
+        topic: str
+):
+    """Вспомогательная функция сохранения в SQL и Vector"""
+    # 1. SQL
     db_model = TaskDBModel(
         task_id=task_id,
         title=task_data.title,
@@ -192,18 +238,16 @@ async def create_custom_task_workflow(level: LevelType, raw_text: str) -> tuple[
     )
     await save_generated_task_to_db(level, db_model)
 
-    # 4. Vector
+    # 2. Vector Store
     try:
         search_text = f"{task_data.title}\n{task_data.description}"
         save_task_to_vectorstore(
             text=search_text,
-            source="custom_hr", # Пометим, что это от HR
+            source=source,
             level=level,
-            topic="Custom",     # Тему можно вытащить из LLM, но пока заглушка
+            topic=topic,
             task_id=task_id,
             extra_meta={"title": task_data.title}
         )
     except Exception as e:
         print(f"Vector save warning: {e}")
-
-    return task_id, task_data
