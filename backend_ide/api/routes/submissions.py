@@ -20,6 +20,7 @@ from backend_ide.services.stats_events import (
     build_task_completed_event,
     send_events,
 )
+from backend_ide.services.tests_getter import fetch_tests_from_rag
 
 router = APIRouter()
 
@@ -38,7 +39,8 @@ async def submit_solution(
     - Возвращаем количество пройденных тестов и детали
     """
 
-    test_cases = await get_test_cases_for_task(str(payload.task_id))
+    test_cases = await fetch_tests_from_rag(payload.task_id)
+    #test_cases = await get_test_cases_for_task(str(payload.task_id))
 
     if not test_cases:
         raise HTTPException(

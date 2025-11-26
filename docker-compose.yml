@@ -1,0 +1,34 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  code_runner:
+    build: .
+    container_name: code_runner
+
+    # Подхватываем .env, если есть (JWT_SECRET, DB_URL и т.п.)
+    env_file:
+      - .env
+
+    environment:
+      # URL до RAG-сервиса в той же docker-сети
+      RAG_API_URL: "http://rag_api:8000"
+
+    volumes:
+      - .:/app                      # dev: код с хоста
+      - /var/run/docker.sock:/var/run/docker.sock  # доступ к docker хоста
+
+    ports:
+      - "9160:8000"                 # с хоста: http://localhost:9160
+
+    command: >
+      uvicorn backend_ide.main:app
+      --host 0.0.0.0
+      --port 8000
+
+    networks:
+      - interview-net
+
+networks:
+  interview-net:
+    external: true
