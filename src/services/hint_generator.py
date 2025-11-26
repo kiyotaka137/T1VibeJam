@@ -16,8 +16,8 @@ class HintGenerator:
     def __init__(self):
         self.llm = ChatOpenAI(
             # Используем IP, чтобы не было DNS ошибок (как в инструкции)
-            base_url="http://45.145.191.148:4000/v1",
-            api_key="sk-x8YPQ4vYbpEJHQlc5faICA",
+            base_url="YOUR_CODE",
+            api_key="YOUR_CODE",
             model="qwen3-32b-awq",  # Обычный универсальный Квен
             temperature=0.5,
             max_tokens=1500,

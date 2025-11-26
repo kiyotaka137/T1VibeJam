@@ -30,8 +30,8 @@ class TaskStructure(BaseModel):
 class TaskGenerator:
     def __init__(self):
         self.llm = ChatOpenAI(
-            base_url="http://45.145.191.148:4000/v1",  # IP-адрес
-            api_key="sk-x8YPQ4vYbpEJHQlc5faICA",
+            base_url="YOUR_CODE",  # IP-адрес
+            api_key="YOUR_CODE",
             # МЕНЯЕМ МОДЕЛЬ НА КОДЕРСКУЮ (она быстрее для кода)
             model="qwen3-coder-30b-a3b-instruct-fp8",
             temperature=0.6,
